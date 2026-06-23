@@ -122,4 +122,4 @@ cbuffer shader_injection : register(b13) {
 
 #endif
 
-#endif  // SRC_TEMPLATE_SHARED_H_
+ #endif  // SRC_SKYRIMSE_SHARED_H_
