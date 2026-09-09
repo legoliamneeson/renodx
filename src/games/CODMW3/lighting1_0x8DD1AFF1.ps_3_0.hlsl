@@ -1,23 +1,18 @@
-// Clamped reconstruction of the original ps_3_0 material-lighting shader.
+// Call of Duty: Modern Warfare 3
+// Shader hash: 0x8DD1AFF1
+// Restored + HDR/NaN-safe reconstruction of the original ps_3_0 material-lighting shader.
 //
-// Processing:
-//   - Sun-shadow sampling and partition blending
-//   - Normal-map decoding
-//   - Model/ambient lighting lookup
-//   - Direct diffuse lighting
-//   - Direct specular lighting
-//   - Reflection-probe lighting
-//   - Detail-map application
-//   - Color-saturation transform
-//   - Fog
+// Repairs:
+//   - Restores the original model-lighting lookup decode (sample.rgb squared).
+//     The previous "already linear" diagnostic made this lighting path too bright.
+//   - Guards zero-length normal/view normalization.
+//   - Guards the reciprocal used to build the model-lighting lookup coordinates.
+//   - Guards reflection-probe log2() against log2(0) / -INF -> NaN.
+//   - Sanitizes the HDR base-color sample before detail/color math.
+//   - Removes the final SDR upper clamp. Negative output is still bounded to 0.
 //
-// Change:
-//   The final RGB output is clamped to 0.0–1.0 using saturate().
+// Alpha remains fixed at 1.0, matching the original shader.
 //
-// This prevents the shader from writing HDR values above 1.0, even when
-// rendering into R16G16B16A16_FLOAT.
-//
-// Alpha remains fixed at 1.0, matching the original assembly.
 
 sampler2D colorMapSampler             : register(s0);
 samplerCUBE reflectionProbeSampler    : register(s1);
@@ -93,6 +88,40 @@ struct PS_INPUT
     float3 texcoord5 : TEXCOORD5;
     float3 texcoord6 : TEXCOORD6;
 };
+
+
+// Minimal ps_3_0-safe numerical guards.
+// These preserve HDR values above 1.0.
+float SafeFinite1(float v)
+{
+    return (v == v) ? clamp(v, -65504.0f, 65504.0f) : 0.0f;
+}
+
+float4 SafeFinite4(float4 v)
+{
+    return float4(
+        SafeFinite1(v.x),
+        SafeFinite1(v.y),
+        SafeFinite1(v.z),
+        SafeFinite1(v.w)
+    );
+}
+
+float3 SafeNormalize3(float3 v)
+{
+    v = float3(
+        SafeFinite1(v.x),
+        SafeFinite1(v.y),
+        SafeFinite1(v.z)
+    );
+
+    float lenSq = dot(v, v);
+
+    // A zero/invalid vector must not feed rsqrt/normalize.
+    return (lenSq > 1e-12f)
+        ? v * rsqrt(lenSq)
+        : float3(0.0f, 0.0f, 1.0f);
+}
 
 
 float4 main(PS_INPUT input) : COLOR0
@@ -237,7 +266,7 @@ float4 main(PS_INPUT input) : COLOR0
         r0.z * input.texcoord2.z
         + r1.w;
 
-    r3.xyz = normalize(
+    r3.xyz = SafeNormalize3(
         float3(r0.y, r0.z, r0.w)
     );
 
@@ -249,7 +278,10 @@ float4 main(PS_INPUT input) : COLOR0
     r0.y = max(abs(r3.y), abs(r3.z));
     r1.y = max(abs(r3.x), r0.y);
 
-    r0.y = 1.0f / r1.y;
+    r0.y = 1.0f / max(
+        SafeFinite1(r1.y),
+        1e-6f
+    );
 
     r1.y = r3.x * lightingLookupScale.x;
     r1.z = r3.y * lightingLookupScale.y;
@@ -297,8 +329,12 @@ float4 main(PS_INPUT input) : COLOR0
         r0.z
     );
 
- // Diagnostic: assume the upgraded lighting lookup is already linear.
-r2.xyz = max(r4.xyz, 0.0f);
+    // Restore the original model-lighting lookup decode.
+    //
+    // The previous diagnostic bypassed this square and treated the lookup
+    // texture as already linear, which makes this lighting path too bright.
+    r2.xyz = max(r4.xyz, 0.0f);
+    r2.xyz *= r2.xyz;
 
     r0.x =
         r0.y * (-r0.z)
@@ -321,7 +357,7 @@ r2.xyz = max(r4.xyz, 0.0f);
     // View and reflection vectors
     // ---------------------------------------------------------------------
 
-    r0.xyz = normalize(input.texcoord5.xyz);
+    r0.xyz = SafeNormalize3(input.texcoord5.xyz);
 
     r0.w = dot(r0.xyz, r3.xyz);
 
@@ -412,10 +448,11 @@ r2.xyz = max(r4.xyz, 0.0f);
 
     r1.xyz *= kMath0.w;
 
-    // Match D3D9 LOG behavior by using the absolute source.
-    r4.x = log2(abs(r1.x));
-    r4.y = log2(abs(r1.y));
-    r4.z = log2(abs(r1.z));
+    // Match D3D9 LOG behavior, but never allow log2(0) to produce -INF.
+    // -INF multiplied by a zero/invalid exponent is a common NaN source.
+    r4.x = log2(max(abs(SafeFinite1(r1.x)), 1e-6f));
+    r4.y = log2(max(abs(SafeFinite1(r1.y)), 1e-6f));
+    r4.z = log2(max(abs(SafeFinite1(r1.z)), 1e-6f));
 
     r1.xyz =
         r4.xyz * envMapParms.w;
@@ -451,6 +488,10 @@ r2.xyz = max(r4.xyz, 0.0f);
         colorMapSampler,
         input.texcoord0
     );
+
+    // This source may now come from an upgraded HDR target. Stop any upstream
+    // NaN/INF here before detail modulation and the material-color square.
+    r3 = SafeFinite4(r3);
 
     // Base alpha controls detail-map intensity.
     r2.xyz =
@@ -491,12 +532,23 @@ r2.xyz = max(r4.xyz, 0.0f);
 
 
     // ---------------------------------------------------------------------
-    // CLAMPED CHANGE
-    //
-    // Prevent negative RGB and values above SDR white.
+    // HDR-safe final output
     // ---------------------------------------------------------------------
+    //
+    // Keep the original lower bound, but do NOT clamp positive HDR values to
+    // 1.0. Also explicitly kill any unexpected NaN that survived an upstream
+    // texture/input path.
 
-    outputColor = saturate(outputColor);
+    outputColor = float3(
+        SafeFinite1(outputColor.r),
+        SafeFinite1(outputColor.g),
+        SafeFinite1(outputColor.b)
+    );
+
+    outputColor = max(
+        outputColor,
+        0.0f.xxx
+    );
 
 
     return float4(
