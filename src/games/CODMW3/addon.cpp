@@ -47,6 +47,7 @@
 #include "../../utils/resource.hpp"
 #include "../../utils/settings.hpp"
 #include "./shared.h"
+#include "./bloom_blend.hpp"
 #include "./mw3_microstutter_core_V14_TRAVERSAL.hpp"
 #include "./mw3_stutter_runtime_V36_V27_SOUND_CACHE_FASTSEEK_NATIVE_FPS.hpp"
 #include "./mw3_frame_deadline.hpp"
@@ -6614,6 +6615,20 @@ for (const auto old_format : scene_intermediate_formats) {
 
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
+  if (fdw_reason == DLL_PROCESS_ATTACH) {
+    reshade::log::message(reshade::log::level::info,
+        "[MW3 HDR Bloom v2] Native draw restoration; no bloom draw replay.");
+    for (const uint32_t hash : {0x95D04DFAu, 0xE629B681u, 0xAF7D4D6Du, 0x411AEC47u}) {
+      auto it = custom_shaders.find(hash);
+      if (it == custom_shaders.end()) continue;
+      it->second.on_draw = [](reshade::api::command_list* cmd) {
+        // Restoration uses the existing native draw hooks, without replay.
+        if (!half_filter::installed ||
+            reinterpret_cast<IDirect3DDevice9*>(cmd->get_device()->get_native()) != half_filter::gpu) return true;
+        return mw3_bloom::Begin(cmd, IsCustomToneMapperEnabled());
+      };
+    }
+  }
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 
 #if 0  // Automatic DX9 output unclamper disabled
