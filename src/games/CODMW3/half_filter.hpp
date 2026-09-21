@@ -128,6 +128,9 @@ void Apply(){
 }
 thread_local unsigned raw_depth=0;
 template<class F> HRESULT Invoke(IDirect3DDevice9* d,F&& f){
+#ifndef MW3_HALF_STANDALONE
+ mw3_bloom::NativeDrawScope bloom_scope(d);
+#endif
  if(!context||!current_override||d!=gpu||raw_depth)return f();
  ++raw_depth;const DWORD incoming=GetLastError();Apply();SetLastError(incoming);
  const HRESULT hr=f();const DWORD outgoing=GetLastError();current_override->Restore();

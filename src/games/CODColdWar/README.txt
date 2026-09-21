@@ -1,98 +1,59 @@
-Call of Duty: Black Ops Cold War - RenoDX native-HDR scene pass
-Target shader: 0xCB76A9C1.ps_6_1
+Call of Duty: Black Ops Cold War - native HDR RenoDX mod
 
-WHY THIS SHADER
----------------
-The solid-magenta probe proved 0xCB76A9C1 affects the full visible HDR image.
+ACTIVE SHADERS
+0xCB76A9C1.ps_6_1: scene composition, selected tone mapper and scene grading.
+0xA93248D1.ps_6_1: late PQ LUT, black correction, highlight recovery and output.
+Both are registered in addon.cpp. Vanilla retains the reconstructed native paths.
 
-Its original DXIL proves:
-- PostFxCBuffer at b6
-- sampler s0
-- 2D resources at t0, t2, t3
-- 3D LUT at t1
-- exposure texture at t5
-- native linear HDR composition
-- ST.2084/PQ encode
-- 32x32x32 LUT half-texel coordinates
-- final SV_Target output
+LUT COMPARISON AND CHANGES
+Compared against these implementations in this checkout:
+- aptinnocence/tonemap10_0xABA0921A.ps_5_0.hlsl samples the LUT black endpoint,
+  decodes PQ and uses lut::CorrectBlack to remove a measured luminance floor.
+- cp2077/tonemapper.hlsl and thewitcher3/lutsampling.hlsl sample LUT reference
+  values and use lut::Unclamp / RecolorUnclamped to correct endpoints.
+- bulletstormfullclip/common.hlsl samples a bounded SDR reference, then uses
+  UpgradeToneMap to restore HDR energy while carrying the LUT grade forward.
 
-WHAT THIS VERSION DOES
-----------------------
-1. Reconstructs the original shader in readable HLSL.
-2. Leaves Tone Mapper = Vanilla as a reconstructed native Cold War path.
-3. Inserts RenoDX ToneMapPass before Cold War's native PQ encoding.
-4. Keeps the game's native PQ encoder and native 32^3 LUT.
-5. Uses max(color, 0) before fractional power/PQ math.
-6. Registers ONLY 0xCB76A9C1 in addon.cpp to avoid the earlier guessed shader set.
+Cold War's late LUT already takes and returns absolute HDR PQ. SDR LUT scaling
+or UpgradeToneMap cannot simply be substituted without a matched SDR reference.
+The late pass therefore keeps the native centered 32-cubed sampling and uses:
 
-SCENE SLIDERS THAT THIS PASS CONSUMES
--------------------------------------
-- Tone Mapper
-- Peak Brightness
-- Game Brightness
-- Gamma Correction
-- Scaling
-- Working Color Space
-- Hue Processor
-- Hue Correction
-- Hue Shift
-- Clamp Color Space
-- Clamp Peak
-- Exposure
-- Highlights
-- Shadows
-- Contrast
-- Saturation
-- Highlight Saturation
-- Blowout
-- Flare
-- Scene Grading
+1. Measured black: sample PQ black at LOD 0, decode it and the graded pixel to
+   nits, subtract the measured BT.2020 luminance floor, and scale RGB uniformly.
+   This replaces the fixed 0.005-0.20 nit fade to ungraded PQ. It retains graded
+   RGB ratios and adapts to the current LUT. A zero floor is a no-op. Intentional
+   LUT black lift is also removed; this is deliberately part of the custom look.
+2. Highlight recovery: retain the existing 40%-85% of display-peak transition,
+   but normalize graded RGB and restore the target maximum channel directly.
+   The old 4x cap no longer blocks recovery from a strongly compressing LUT.
+   Near-zero graded output falls back smoothly to the pre-LUT colour direction.
+   Recovery does not boost above the larger of input and graded maximum channels.
+3. Continuous peak shoulder: start at 99% of display peak and asymptotically
+   approach peak. The old overshoot-only mapping jumped down to 99% immediately
+   above peak. At 800 nits, 792 is unchanged, 800 maps to about 797.06, and 808
+   maps to about 798.92. RGB ratios remain unchanged by the shoulder.
+4. Clamp custom output to nonnegative PQ as well as the display peak AFTER the
+   original dither/quantization. Vanilla retains the original quantization.
 
-IMPORTANT
----------
-UI Brightness is NOT independently solvable from this one fullscreen scene pass.
-It needs a separately proven UI/HUD shader so UI can be scaled without changing the scene.
+Cost: one extra 3D LUT fetch for custom modes. Native sampling remains trilinear;
+tetrahedral interpolation is a separate quality/performance choice and does not
+by itself fix a raised endpoint or recover brightness removed by the LUT.
 
-Tone Mapper defaults to RenoDRT in this package so the sliders visibly respond.
-Choose Vanilla for the reconstructed original Cold War HDR path.
+VALIDATION / LIVE TEST
+Compile both shaders with DXC: -T ps_6_1 -HV 2021 -O3 -E main.
+Keep shared.h, pragmap.hlsl and the repository shader includes available.
 
-INSTALL / LIVE TEST
--------------------
-Use these three live/build source files together:
-- addon.cpp
-- shared.h
-- tonemap_0xCB76A9C1.ps_6_1.hlsl
+In-game checks still required (synthetic checks cannot validate the game's LUT):
+- Compare Vanilla with the previous version at identical game HDR settings.
+- In custom modes inspect a dark neutral ramp, coloured shadows and scene changes.
+  Check that intentional shadow detail survives measured-floor removal.
+- Compare bright clouds, lamps and saturated effects at 400/800/1500 nit peaks.
+  Check for banding or noise revealed by stronger highlight recovery.
+- Test RenoDRT, PsychoV30 and Pragmap, plus menus/HUD and scene grade strength.
+  This late full-screen correction can also affect UI already in the source.
+- Use a float HDR capture to inspect the result; an SDR screenshot is insufficient
+  to establish absolute nit levels or the correctness of the native HDR convention.
 
-Remove/rename the old:
-- tonemap_0x54F7D5AB.cs_6_1.hlsl
-- ui_0xCF31DF83.ps_6_1.hlsl
-- probe shaders
-
-from the DevKit LivePath while testing, so only the intended CB76 replacement is live.
-
-Expected DevKit line:
-Compiling file: ...\tonemap_0xCB76A9C1.ps_6_1.hlsl, hash: 0xcb76a9c1, target: ps_6_1
-
-FIRST TEST
-----------
-1. Start in Vanilla and verify the image is sane.
-2. Switch Tone Mapper to RenoDRT.
-3. Move Exposure dramatically.
-4. Move Saturation dramatically.
-5. Change Peak Brightness (e.g. 600 vs 1500).
-6. Change Game Brightness.
-7. Lower Scene Grading to confirm the native 3D LUT blend responds.
-
-If Vanilla is wrong, stop there: that means one reconstructed native operation differs.
-If Vanilla is correct but RenoDRT is wrong, the target shader is correct and only the
-RenoDX-domain scaling/working-space bridge needs adjustment.
-
-COMPILE FIX
------------
-This revision explicitly includes:
-    ../../shaders/renodx.hlsl
-inside tonemap_0xCB76A9C1.ps_6_1.hlsl.
-
-This fixes:
-    use of undeclared identifier 'renodx'
-at renodx::draw::Config / renodx::draw::ToneMapPass.
+The primary scene LUT and tone mappers are unchanged. This correction cannot
+recover detail already clipped by an earlier pass. No runtime capture was used
+to establish a new colour-space or brightness convention.

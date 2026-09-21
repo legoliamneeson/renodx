@@ -45,6 +45,7 @@
 #include "../../utils/resource.hpp"
 #include "../../utils/settings.hpp"
 #include "./shared.h"
+#include "./bloom_blend.hpp"
 #include "./codwaw_frame_timing.hpp"
 
 #ifndef RENODX_PSYCHO_SLIDER_LAYOUT_VERSION
@@ -6884,6 +6885,16 @@ for (const auto old_format : scene_intermediate_formats) {
 
   renodx::utils::settings::Use(fdw_reason, &settings, &OnPresetOff);
   renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
+  if (fdw_reason == DLL_PROCESS_ATTACH) {
+    for (const uint32_t hash : {0xCD4117DCu, 0xD503E7F7u, 0xF63A82B3u, 0x97F2AB01u}) {
+      auto it = custom_shaders.find(hash);
+      if (it == custom_shaders.end()) continue;
+      it->second.on_draw = [](reshade::api::command_list* cmd) {
+        return codwaw_bloom::Begin(cmd, IsCustomToneMapperEnabled());
+      };
+      it->second.on_drawn = codwaw_bloom::Restore;
+    }
+  }
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
 
 #if 0  // Automatic DX9 output unclamper disabled

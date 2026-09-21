@@ -37,6 +37,9 @@
 #include "../../utils/resource.hpp"
 #include "../../utils/settings.hpp"
 #include "./shared.h"
+#include <d3d9.h>
+#include "./bloom_blend.hpp"
+#include "./bloom_native.hpp"
 
 #ifndef RENODX_PSYCHOV24_SLIDER_LAYOUT_VERSION
 #error "CODBLOPS: shared.h is outdated. Replace shared.h with the PsychoV24 slider version from the same package."
@@ -4245,6 +4248,14 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   switch (fdw_reason) {
     case DLL_PROCESS_ATTACH:
       if (!reshade::register_addon(h_module)) return FALSE;
+      reshade::register_event<reshade::addon_event::init_device>(mw3_bloom_native::Init);
+      reshade::register_event<reshade::addon_event::destroy_device>(mw3_bloom_native::Destroy);
+      for (const auto hash : {0x95D04DFAu, 0xE629B681u, 0xAF7D4D6Du, 0x411AEC47u}) {
+        custom_shaders[hash].on_draw = [](reshade::api::command_list* cmd) {
+          if (!mw3_bloom_native::Ready(cmd)) return true;
+          return mw3_bloom::Begin(cmd, IsCustomToneMapperEnabled());
+        };
+      }
 
       if (!initialized) {
         renodx::mods::shader::force_pipeline_cloning = true;
@@ -4570,6 +4581,8 @@ for (const auto old_format : scene_intermediate_formats) {
       }
       break;
     case DLL_PROCESS_DETACH:
+      reshade::unregister_event<reshade::addon_event::init_device>(mw3_bloom_native::Init);
+      reshade::unregister_event<reshade::addon_event::destroy_device>(mw3_bloom_native::Destroy);
       cod_high_polling_mouse::Shutdown();
       mw3_x86_pacing::Shutdown();
       ClearDX9ReadbackStagingCache();
@@ -4606,3 +4619,4 @@ for (const auto old_format : scene_intermediate_formats) {
 
   return TRUE;
 }
+

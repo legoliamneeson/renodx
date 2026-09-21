@@ -19,26 +19,10 @@
 //   No RenoDX peak clamp.
 //
 // NON-VANILLA:
-//
-//   1. Protect absolute black from the native LUT:
-//        <= 0.005 nits : raw PQ
-//        0.005-0.20    : fade into native LUT
-//
-//   2. Preserve the native LUT color grade.
-//
-//   3. Reconstruct HDR brightness lost to the LUT in absolute-nit space:
-//        - preserve LUT RGB/color relationships
-//        - restore the pre-LUT max channel progressively in highlights
-//        - no fixed arbitrary post-LUT brightness multiplier
-//
-//
-//   4. Apply extreme-overshoot-only protection after reconstruction.
-//
-//      This prevents the LUT from re-expanding many bright values into the same
-//      hard Peak Brightness ceiling. Only the post-dither safety clamp remains.
-//
-// PQ itself remains capable of representing up to 10,000 nits.
-
+//   Measure the LUT black endpoint and remove its luminance floor in linear nits.
+//   Restore highlight brightness with a uniform RGB scale, preserving LUT colour.
+//   Use a continuous shoulder in the last 1% of the display range.
+//   Keep native LUT coordinates, dithering and quantization; bound custom output.
 #include "./shared.h"
 
 
@@ -105,77 +89,10 @@ static const float COLDWAR_LUT_OFFSET =
     0.5f / 32.0f;
 
 
-// ============================================================================
-// Near-black LUT correction
-// ============================================================================
-//
-// <= 0.005 nits
-//     Completely bypass native LUT.
-//
-// 0.005 -> 0.20 nits
-//     Smoothly restore native LUT.
-//
-// >= 0.20 nits
-//     Native LUT has full strength unless highlight release begins.
-//
-
-static const float BLACK_FIX_START_NITS = 0.005f;
-static const float BLACK_FIX_END_NITS   = 0.20f;
-
-
-// ============================================================================
-// Highlight LUT release
-// ============================================================================
-//
-// <= 900 nits
-//     Full native LUT.
-//
-// 900 -> 1100 nits
-//     Smoothly release native LUT.
-//
-// >= 1100 nits
-//     Raw PQ result.
-//
-// This removes the apparent ~1000-nit ceiling imposed by the late HDR LUT.
-//
-
-// RenoDX-style HDR LUT brightness reconstruction.
-//
-// The LUT remains responsible for color. Brightness lost to the LUT is
-// progressively reconstructed from the already-tonemapped pre-LUT HDR signal
-// in absolute-nit space.
-//
-// 800-nit example:
-//   <= ~320 nits : preserve native LUT luminance
-//   320-680 nits : progressively restore pre-LUT highlight brightness
-//   >= ~680 nits : fully preserve pre-LUT max-channel brightness
+// Keep the existing peak-relative recovery window for compatibility.
 static const float LUT_RECONSTRUCT_START_RATIO = 0.40f;
-static const float LUT_RECONSTRUCT_FULL_RATIO  = 0.85f;
-
-// Safety cap for pathological LUT values. A normal 686 -> 400 nit loss needs
-// only ~1.72x, so it is fully recoverable.
-static const float LUT_RECONSTRUCT_MAX_GAIN = 4.00f;
-
-
-// ============================================================================
-// Extreme-overshoot-only highlight protection
-// ============================================================================
-//
-// Normal display-range highlights are completely untouched.
-//
-// At an 800-nit Peak Brightness setting:
-//     686 nits -> untouched
-//     750 nits -> untouched
-//     799 nits -> untouched
-//     >800 nits -> smoothly folded into a narrow band below peak
-//
-// This is deliberately not a general highlight shoulder. It exists only to
-// prevent true post-LUT overshoot from reaching the hard display ceiling.
-//
-static const float OVERSHOOT_BAND_START_RATIO  = 0.9900f;
-static const float OVERSHOOT_BAND_TARGET_RATIO = 0.9975f;
-static const float OVERSHOOT_RESPONSE_RATIO    = 0.10f;
-
+static const float LUT_RECONSTRUCT_FULL_RATIO = 0.85f;
+static const float OUTPUT_SHOULDER_START_RATIO = 0.99f;
 
 // ============================================================================
 // Safety helpers
@@ -297,167 +214,57 @@ float3 PQDecodeNits(float3 pqColor)
 }
 
 
-// ============================================================================
-// HDR LUT max-channel reconstruction
-// ============================================================================
-//
-// rawPQ    = pre-LUT HDR result after the primary tonemapper
-// gradedPQ = native Cold War LUT result
-//
-// Decode both to absolute nits, preserve the LUT's RGB ratios/color, and
-// progressively restore max-channel energy that the LUT removed.
-//
-// This does not invent brightness above the pre-LUT tonemapped signal.
+// Measured black correction, analogous to lut::CorrectBlack at strength zero.
+// This pass uses native BT.2020/PQ, so use BT.2020 luminance in absolute nits
+// instead of the shared helper's BT.709 weights. Uniform scaling retains hue.
+float3 CorrectLUTBlackNits(float3 gradedNits, float3 blackNits)
+{
+    const float3 lumaWeights = float3(0.2627f, 0.6780f, 0.0593f);
+    float gradedY = dot(gradedNits, lumaWeights);
+    float blackY = dot(blackNits, lumaWeights);
+    if (blackY <= 0.0f) return gradedNits;
+    return gradedNits * (max(gradedY - blackY, 0.0f) / max(gradedY, 1e-8f));
+}
 
-float3 ReconstructLUTBrightnessPQ(
-    float3 rawPQ,
-    float3 gradedPQ,
+// Recover only energy lost to the LUT, using its RGB direction in linear light.
+// Normalize before applying the target peak: no arbitrary gain ceiling that
+// could leave strongly compressed highlights trapped below the display peak.
+float3 ReconstructLUTBrightnessNits(
+    float3 rawNits,
+    float3 gradedNits,
     float configuredPeakNits)
 {
-    float3 rawNits =
-        PQDecodeNits(
-            rawPQ);
+    float rawPeak = Max3(rawNits);
+    float gradedPeak = Max3(gradedNits);
+    float strength = smoothstep(
+        configuredPeakNits * LUT_RECONSTRUCT_START_RATIO,
+        configuredPeakNits * LUT_RECONSTRUCT_FULL_RATIO,
+        rawPeak);
+    if (strength <= 0.0f || rawPeak <= gradedPeak) return gradedNits;
+    float targetPeak = lerp(gradedPeak, rawPeak, strength);
 
-    float3 gradedNits =
-        PQDecodeNits(
-            gradedPQ);
-
-    float rawPeakNits =
-        Max3(
-            rawNits);
-
-    float gradedPeakNits =
-        Max3(
-            gradedNits);
-
-    float restoreStartNits =
-        configuredPeakNits
-        * LUT_RECONSTRUCT_START_RATIO;
-
-    float restoreFullNits =
-        configuredPeakNits
-        * LUT_RECONSTRUCT_FULL_RATIO;
-
-    float restoreStrength =
-        smoothstep(
-            restoreStartNits,
-            max(
-                restoreFullNits,
-                restoreStartNits + 0.001f),
-            rawPeakNits);
-
-    // Only restore brightness LOST to the LUT.
-    // If the LUT is already brighter, leave that brightness unchanged here.
-    float desiredGain =
-        rawPeakNits
-        / max(
-            gradedPeakNits,
-            0.0001f);
-
-    desiredGain =
-        clamp(
-            desiredGain,
-            1.0f,
-            LUT_RECONSTRUCT_MAX_GAIN);
-
-    float appliedGain =
-        lerp(
-            1.0f,
-            desiredGain,
-            restoreStrength);
-
-    float3 reconstructedNits =
-        SafePositive(
-            gradedNits
-            * appliedGain);
-
-    // PQEncode expects Cold War linear units where 1.0 = 100 nits.
-    return PQEncode(
-        reconstructedNits
-        / COLDWAR_GAME_UNIT_NITS);
+    // A black/near-black LUT result has no reliable hue. Fade to the input
+    // direction in this degenerate case instead of multiplying zero by infinity.
+    const float epsilonNits = 1e-4f;
+    float3 rawDirection = rawNits / max(rawPeak, epsilonNits);
+    float3 direction = gradedNits / max(gradedPeak, epsilonNits)
+        + rawDirection * (1.0f - saturate(gradedPeak / epsilonNits));
+    return direction * (targetPeak / max(Max3(direction), 1e-8f));
 }
 
-
-// ============================================================================
-// Extreme overshoot protection (PQ -> nits -> PQ)
-// ============================================================================
-//
-// Only pixels whose brightest channel is ABOVE the configured peak enter this
-// function's mapping. Everything at or below Peak Brightness returns unchanged.
-// RGB is scaled uniformly to preserve hue/chromaticity.
-//
-float3 ApplyUnderPeakProtectionPQ(
-    float3 pqColor)
+// A bounded monotonic curve must start BELOW peak; folding only values above
+// peak back underneath it creates a downward discontinuity. This exponential
+// is value- and slope-continuous at 99% and scales RGB uniformly to retain hue.
+float3 ApplyUnderPeakProtectionNits(float3 linearNits, float displayPeakNits)
 {
-    float3 linearNits =
-        PQDecodeNits(
-            pqColor);
-
-    float sourcePeakNits =
-        Max3(
-            linearNits);
-
-    float displayPeakNits =
-        clamp(
-            RENODX_PEAK_WHITE_NITS,
-            1.0f,
-            10000.0f);
-
-    // IMPORTANT: normal highlights are completely untouched.
-    if (sourcePeakNits <= displayPeakNits)
-    {
-        return pqColor;
-    }
-
-    float bandStartNits =
-        displayPeakNits
-        * OVERSHOOT_BAND_START_RATIO;
-
-    float targetPeakNits =
-        displayPeakNits
-        * OVERSHOOT_BAND_TARGET_RATIO;
-
-    float responseNits =
-        max(
-            displayPeakNits
-            * OVERSHOOT_RESPONSE_RATIO,
-            0.001f);
-
-    float overshootNits =
-        sourcePeakNits
-        - displayPeakNits;
-
-    // Only the TRUE overshoot controls the blend.
-    // Just-over-peak values land near 99% of peak; progressively more extreme
-    // values approach 99.75% instead of clipping to exactly Peak Brightness.
-    float response =
-        1.0f
-        - exp(
-            -overshootNits
-            / responseNits);
-
-    float mappedPeakNits =
-        lerp(
-            bandStartNits,
-            targetPeakNits,
-            saturate(response));
-
-    float scale =
-        mappedPeakNits
-        / max(
-            sourcePeakNits,
-            0.000001f);
-
-    float3 mappedNits =
-        SafePositive(
-            linearNits
-            * scale);
-
-    return PQEncode(
-        mappedNits
-        / COLDWAR_GAME_UNIT_NITS);
+    float sourcePeak = Max3(linearNits);
+    float start = displayPeakNits * OUTPUT_SHOULDER_START_RATIO;
+    if (sourcePeak <= start) return linearNits;
+    float headroom = displayPeakNits - start;
+    float mappedPeak = start + headroom
+        * (1.0f - exp(-(sourcePeak - start) / headroom));
+    return linearNits * (mappedPeak / sourcePeak);
 }
-
 
 // ============================================================================
 // Configured RenoDX peak -> PQ
@@ -610,68 +417,20 @@ float4 main(PSInput input) : SV_Target0
         // RENO DX MODES
         // ====================================================================
 
-        float inputNits =
-            Max3(linearHDR)
-            * COLDWAR_GAME_UNIT_NITS;
+        float configuredPeakNits = clamp(RENODX_PEAK_WHITE_NITS, 1.0f, 10000.0f);
 
-
-        // --------------------------------------------------------------------
-        // Near-black LUT strength
-        // --------------------------------------------------------------------
-
-        float blackLUTStrength =
-            smoothstep(
-                BLACK_FIX_START_NITS,
-                BLACK_FIX_END_NITS,
-                inputNits);
-
-
-        // --------------------------------------------------------------------
-        // HDR LUT brightness reconstruction
-        // --------------------------------------------------------------------
-
-        float configuredPeakNits =
-            max(
-                RENODX_PEAK_WHITE_NITS,
-                1.0f);
-
-        float3 reconstructedLUT =
-            ReconstructLUTBrightnessPQ(
-                pqColor,
-                lutColor,
-                configuredPeakNits);
-
-
-        // --------------------------------------------------------------------
-        // Near-black LUT bypass + reconstructed LUT
-        // --------------------------------------------------------------------
-        //
-        // Absolute black still bypasses the LUT. Everywhere else, keep the
-        // native LUT color while using the reconstructed HDR brightness.
-        //
-        outputColor =
-            lerp(
-                pqColor,
-                reconstructedLUT,
-                saturate(
-                    blackLUTStrength));
-
-
-        // --------------------------------------------------------------------
-        // Extreme-overshoot-only highlight protection
-        // --------------------------------------------------------------------
-        //
-        // The native LUT can re-expand highlights after the primary tonemapper.
-        // Only catch true post-LUT overshoot here. Normal highlights at or below
-        // Peak Brightness remain completely unchanged.
-        //
-        outputColor =
-            ApplyUnderPeakProtectionPQ(
-                outputColor);
-
-        // Emergency post-dither ceiling remains the REAL display peak. Because
-        // the image shoulder targets below peak, this should almost never touch
-        // actual highlight content.
+        // Use the same PQ black coordinate as the pixel path, at explicit LOD 0.
+        // This measures the current LUT, including changes with scene/settings.
+        float3 blackPQ = PQEncode(0.0f.xxx);
+        float3 blackNits = PQDecodeNits(codeTexture1.SampleLevel(
+            samplerLUT, blackPQ * COLDWAR_LUT_SCALE + COLDWAR_LUT_OFFSET, 0).rgb);
+        float3 gradedNits = CorrectLUTBlackNits(PQDecodeNits(lutColor), blackNits);
+        float3 reconstructedNits = ReconstructLUTBrightnessNits(
+            SafePositive(linearHDR) * COLDWAR_GAME_UNIT_NITS,
+            gradedNits, configuredPeakNits);
+        float3 outputNits = ApplyUnderPeakProtectionNits(
+            reconstructedNits, configuredPeakNits);
+        outputColor = PQEncode(outputNits / COLDWAR_GAME_UNIT_NITS);
         configuredPeakPQ =
             GetRenoDXPeakPQ();
     }
@@ -729,10 +488,7 @@ float4 main(PSInput input) : SV_Target0
     [branch]
     if (RENODX_TONE_MAP_TYPE >= 0.5f)
     {
-        quantized =
-            min(
-                quantized,
-                configuredPeakPQ.xxx);
+        quantized = clamp(quantized, 0.0f.xxx, configuredPeakPQ.xxx);
     }
 
 

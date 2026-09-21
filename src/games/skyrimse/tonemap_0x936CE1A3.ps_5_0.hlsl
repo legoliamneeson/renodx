@@ -205,29 +205,31 @@ void main(
   }
 
   // ===== HDR PATH (RenoDRT / PsychoV24) =====
-  if (IsCustomHDRMode()) {
-    // Eye adaptation
-    float lum = dot(float3(0.212500006, 0.715399981, 0.0720999986), r0.xyz);
-    lum = max(9.99999975e-006, lum);
-    float lumAdjusted = lum * r2.y / r2.x;
-    r0.xyz = r0.xyz * lumAdjusted / lum;
+  {
+    // Apply eye adaptation once, consistently in both HDR variants.
+    float exposure = SafeFinite1(r2.y / max(r2.x, 1e-5f));
+    r0.xyz = SafePositive(r0.xyz * exposure);
 
-    // Preserved from your original V22 shader: this variant applies the
-    // adaptation scale a second time.
-    r0.xyz = r0.xyz * (lumAdjusted / lum);
-
-    // Bloom (pre-tonemap)
-    const float bloomStrength = 1.0;
-    r0.xyz = (r1.xyz * saturate(cb2[2].x - renodx::color::y::from::BT709(r0.xyz))) * bloomStrength + r0.xyz;
-
-    // Clean
-    r0.xyz = max(0, r0.xyz);
+    // Retain the game's receiver-brightness falloff with a soft knee, so the
+    // quarter-resolution blur does not cover bright surfaces in broad blobs.
+    // Use a shared RGB weight to preserve hue, with no per-channel hard cap.
+    float bloomLimit = saturate(cb2[2].x);
+    float sceneLuma = renodx::color::y::from::BT709(r0.xyz);
+    float knee = max(0.1f * bloomLimit, 1e-5f);
+    float delta = bloomLimit - sceneLuma;
+    float softWeight = delta >= 0.0f
+        ? 0.5f * (delta + sqrt(delta * delta + knee * knee))
+        : 0.5f * knee * knee / (sqrt(delta * delta + knee * knee) - delta);
+    float bloomStrength = 0.35f * min(bloomLimit, softWeight);
+    float3 bloomLinear = renodx::color::gamma::DecodeSafe(SafePositive(r1.xyz));
 
     renodx::draw::Config config = renodx::draw::BuildConfig();
     config.reno_drt_tone_map_method = renodx::tonemap::renodrt::config::tone_map_method::HERMITE_SPLINE;
 
     // Linearize to BT.709 scene-linear for RenoDRT/PsychoV24.
     r0.xyz = renodx::color::gamma::DecodeSafe(r0.xyz);
+
+    r0.xyz = SafePositive(r0.xyz + bloomLinear * bloomStrength);
 
     // HDR Boost / inverse tone mapping. Applied only to the custom HDR path,
     // after eye adaptation and before either HDR tone mapper.

@@ -78,13 +78,14 @@ SamplerState s3 : register(s3);
 SamplerState s4 : register(s4);
 
 float4 main(
-    linear float4 TEXCOORD10_centroid: TEXCOORD10_centroid,
-    linear float4 TEXCOORD11_centroid: TEXCOORD11_centroid,
-    linear float4 TEXCOORD: TEXCOORD,
-    nointerpolation uint PRIMITIVE_ID: PRIMITIVE_ID,
-    linear float4 TEXCOORD_7: TEXCOORD7,
-    noperspective float4 SV_Position: SV_Position,
-    nointerpolation uint SV_IsFrontFace: SV_IsFrontFace) : SV_Target {
+  linear float4 TEXCOORD10_centroid : TEXCOORD10_centroid,
+  linear float4 TEXCOORD11_centroid : TEXCOORD11_centroid,
+  linear float4 TEXCOORD : TEXCOORD,
+  nointerpolation uint PRIMITIVE_ID : PRIMITIVE_ID,
+  linear float4 TEXCOORD_7 : TEXCOORD7,
+  noperspective float4 SV_Position : SV_Position,
+  nointerpolation uint SV_IsFrontFace : SV_IsFrontFace
+) : SV_Target {
   float4 SV_Target;
   float _68 = (mad((SV_Position.z), (cb0_046w), (mad((SV_Position.y), (cb0_045w), ((cb0_044w) * (SV_Position.x)))))) + (cb0_047w);
   float _72 = (((mad((SV_Position.z), (cb0_046x), (mad((SV_Position.y), (cb0_045x), ((cb0_044x) * (SV_Position.x)))))) + (cb0_047x)) / _68) - (cb0_070x);
@@ -109,15 +110,15 @@ float4 main(
   float _233;
   if ((((cb1_114w) > 0.0f))) {
     float _139 = (mad(_74, (cb0_006w), (mad(_73, (cb0_005w), (_72 * (cb0_004w)))))) + (cb0_007w);
-    float4 _173 = t1.SampleLevel(s0, float3((((((mad(_74, (cb0_006x), (mad(_73, (cb0_005x), (_72 * (cb0_004x)))))) + (cb0_007x)) / _139) * 0.5f) + 0.5f), (0.5f - ((((mad(_74, (cb0_006y), (mad(_73, (cb0_005y), (_72 * (cb0_004y)))))) + (cb0_007y)) / _139) * 0.5f)), (((cb0_209z) * (log2((((cb0_209x)*_139) + (cb0_209y))))) * (cb0_208z))), 0.0f);
+    float4 _173 = t1.SampleLevel(s0, float3((((((mad(_74, (cb0_006x), (mad(_73, (cb0_005x), (_72 * (cb0_004x)))))) + (cb0_007x)) / _139) * 0.5f) + 0.5f), (0.5f - ((((mad(_74, (cb0_006y), (mad(_73, (cb0_005y), (_72 * (cb0_004y)))))) + (cb0_007y)) / _139) * 0.5f)), (((cb0_209z) * (log2((((cb0_209x) * _139) + (cb0_209y))))) * (cb0_208z))), 0.0f);
     _186 = (((_173.w) * (TEXCOORD_7.x)) + (_173.x));
     _187 = (((_173.w) * (TEXCOORD_7.y)) + (_173.y));
     _188 = (((_173.w) * (TEXCOORD_7.z)) + (_173.z));
     _189 = ((_173.w) * (TEXCOORD_7.w));
   }
-  float _190 = max(((((cb2_001x)-_101) * (cb2_004y)) + _101), 0.0f);
-  float _191 = max(((((cb2_001y)-_102) * (cb2_004y)) + _102), 0.0f);
-  float _192 = max(((((cb2_001z)-_103) * (cb2_004y)) + _103), 0.0f);
+  float _190 = max(((((cb2_001x) - _101) * (cb2_004y)) + _101), 0.0f);
+  float _191 = max(((((cb2_001y) - _102) * (cb2_004y)) + _102), 0.0f);
+  float _192 = max(((((cb2_001z) - _103) * (cb2_004y)) + _103), 0.0f);
   _230 = _127;
   _231 = _190;
   _232 = _191;
