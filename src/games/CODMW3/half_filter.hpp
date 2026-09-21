@@ -23,7 +23,7 @@ using IndexedUpFn=HRESULT(WINAPI*)(IDirect3DDevice9*,D3DPRIMITIVETYPE,UINT,UINT,
 DrawFn raw_draw=nullptr;IndexedFn raw_indexed=nullptr;UpFn raw_up=nullptr;IndexedUpFn raw_indexed_up=nullptr;
 std::recursive_mutex mutex;
 IDirect3DDevice9* gpu=nullptr;
-std::atomic<bool> enabled=true;bool installed=false,attempted=false,key_down=false,announced=false;
+std::atomic<bool> enabled=true,installed=false,attempted=false;bool key_down=false,announced=false;
 HMODULE module=nullptr;
 template<class T> void Release(T*& p){if(p)p->Release();p=nullptr;}
 struct Buffer {IDirect3DTexture9* texture=nullptr;IDirect3DSurface9* surface=nullptr;UINT w=0,h=0;D3DFORMAT format=D3DFMT_UNKNOWN;
@@ -127,15 +127,20 @@ void Apply(){
  }
 }
 thread_local unsigned raw_depth=0;
+std::atomic<unsigned> rejected_draw_recursion{0};
 template<class F> HRESULT Invoke(IDirect3DDevice9* d,F&& f){
 #ifndef MW3_HALF_STANDALONE
  mw3_bloom::NativeDrawScope bloom_scope(d);
 #endif
- if(!context||!current_override||d!=gpu||raw_depth)return f();
- ++raw_depth;const DWORD incoming=GetLastError();Apply();SetLastError(incoming);
+ // Guard every entry, including calls outside a half-filter pass. A cyclic
+ // external draw-hook chain must fail the draw instead of exhausting the stack.
+ if(raw_depth>=8){rejected_draw_recursion.fetch_add(1,std::memory_order_relaxed);return D3DERR_INVALIDCALL;}
+ struct DepthScope {DepthScope(){++raw_depth;} ~DepthScope(){--raw_depth;}} depth_scope;
+ if(!context||!current_override||d!=gpu||raw_depth>1)return f();
+ const DWORD incoming=GetLastError();Apply();SetLastError(incoming);
  const HRESULT hr=f();const DWORD outgoing=GetLastError();current_override->Restore();
  if(SUCCEEDED(hr)&&current_override->half)++context->reduced;
- if(FAILED(hr))current_override->next_source=nullptr;--raw_depth;SetLastError(outgoing);return hr;
+ if(FAILED(hr))current_override->next_source=nullptr;SetLastError(outgoing);return hr;
 }
 HRESULT WINAPI RawDraw(IDirect3DDevice9* d,D3DPRIMITIVETYPE t,UINT a,UINT b){return Invoke(d,[&]{return raw_draw(d,t,a,b);});}
 HRESULT WINAPI RawIndexed(IDirect3DDevice9* d,D3DPRIMITIVETYPE t,INT a,UINT b,UINT c,UINT e,UINT f){return Invoke(d,[&]{return raw_indexed(d,t,a,b,c,e,f);});}
@@ -166,18 +171,24 @@ bool Verify(uintptr_t base){
  return !memcmp(reinterpret_cast<void*>(base+0x18eec0),filter,sizeof(filter))&&!memcmp(reinterpret_cast<void*>(base+0x189990),draw,sizeof(draw));
 }
 void Install(IDirect3DDevice9* native){
- if(attempted)return;attempted=true;const auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+ if(attempted.exchange(true))return;const auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
  if(!Verify(base)){Log("[MW3 Half Filter V2] Executable identity/signatures do not match; no hooks installed.");return;}
  execute=reinterpret_cast<EngineFn>(base+0x18eec0);draw_material=reinterpret_cast<EngineFn>(base+0x189990);
  auto** vtable=*reinterpret_cast<void***>(native);
+ for(unsigned i=81;i<=84;++i){
+  if(!vtable[i]){Log("[MW3 Hook Safety] Null draw target; half-filter hooks skipped.");return;}
+  for(unsigned j=81;j<i;++j)if(vtable[i]==vtable[j]){
+   Log("[MW3 Hook Safety] Aliased draw targets; half-filter hooks skipped.");return;
+  }
+ }
  raw_draw=reinterpret_cast<DrawFn>(vtable[81]);raw_indexed=reinterpret_cast<IndexedFn>(vtable[82]);raw_up=reinterpret_cast<UpFn>(vtable[83]);raw_indexed_up=reinterpret_cast<IndexedUpFn>(vtable[84]);
  HMODULE pinned=nullptr;if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(&HookExecute),&pinned))return;
- LONG status=hook_transaction::Begin();if(status==NO_ERROR){status=DetourAttach(reinterpret_cast<PVOID*>(&execute),reinterpret_cast<PVOID>(&HookExecute));
-  if(status==NO_ERROR)status=DetourAttach(reinterpret_cast<PVOID*>(&draw_material),reinterpret_cast<PVOID>(&HookDraw));
-  if(status==NO_ERROR)status=DetourAttach(reinterpret_cast<PVOID*>(&raw_draw),reinterpret_cast<PVOID>(&RawDraw));
-  if(status==NO_ERROR)status=DetourAttach(reinterpret_cast<PVOID*>(&raw_indexed),reinterpret_cast<PVOID>(&RawIndexed));
-  if(status==NO_ERROR)status=DetourAttach(reinterpret_cast<PVOID*>(&raw_up),reinterpret_cast<PVOID>(&RawUp));
-  if(status==NO_ERROR)status=DetourAttach(reinterpret_cast<PVOID*>(&raw_indexed_up),reinterpret_cast<PVOID>(&RawIndexedUp));
+ LONG status=hook_transaction::Begin();if(status==NO_ERROR){status=hook_transaction::Attach(reinterpret_cast<PVOID*>(&execute),reinterpret_cast<PVOID>(&HookExecute));
+  if(status==NO_ERROR)status=hook_transaction::Attach(reinterpret_cast<PVOID*>(&draw_material),reinterpret_cast<PVOID>(&HookDraw));
+  if(status==NO_ERROR)status=hook_transaction::Attach(reinterpret_cast<PVOID*>(&raw_draw),reinterpret_cast<PVOID>(&RawDraw));
+  if(status==NO_ERROR)status=hook_transaction::Attach(reinterpret_cast<PVOID*>(&raw_indexed),reinterpret_cast<PVOID>(&RawIndexed));
+  if(status==NO_ERROR)status=hook_transaction::Attach(reinterpret_cast<PVOID*>(&raw_up),reinterpret_cast<PVOID>(&RawUp));
+  if(status==NO_ERROR)status=hook_transaction::Attach(reinterpret_cast<PVOID*>(&raw_indexed_up),reinterpret_cast<PVOID>(&RawIndexedUp));
   if(status==NO_ERROR)status=hook_transaction::Commit();else hook_transaction::Abort();}
  installed=status==NO_ERROR;Log(installed?"[MW3 Half Filter V2] Ready. F8 toggles intermediate half-resolution filtering. No Tracy; V36/pacing untouched.":"[MW3 Half Filter V2] Hook transaction failed and was rolled back.");
 }
@@ -190,6 +201,12 @@ reshade::api::device* device=nullptr;
 void Init(reshade::api::device* d){if(d->get_api()!=reshade::api::device_api::d3d9)return;Start(reinterpret_cast<IDirect3DDevice9*>(d->get_native()));device=d;}
 void Destroy(reshade::api::device* d){std::scoped_lock lock(mutex);if(d==device){Clear();gpu=nullptr;device=nullptr;}}
 void DestroySwapchain(reshade::api::swapchain* s,bool){if(s->get_device()==device)BeforeReset(gpu);}
-void Present(reshade::api::command_queue* q,reshade::api::swapchain*,const reshade::api::rect*,const reshade::api::rect*,uint32_t,const reshade::api::rect*){if(q->get_device()==device)Toggle();}
+void Present(reshade::api::command_queue* q,reshade::api::swapchain*,const reshade::api::rect*,const reshade::api::rect*,uint32_t,const reshade::api::rect*){
+ if(q->get_device()==device){
+  Toggle();
+  if(rejected_draw_recursion.exchange(0,std::memory_order_relaxed))
+   Log("[MW3 Hook Safety] Excessive native draw recursion blocked; check other draw interceptors.");
+ }
+}
 #endif
 }
