@@ -4,6 +4,7 @@
 #include <Windows.h>
 #include <intrin.h>
 #include <detours.h>
+#include "hook_transaction.hpp"
 
 #include <algorithm>
 #include <array>
@@ -401,7 +402,10 @@ bool PatchIatSymbol(
 
       void** slot = reinterpret_cast<void**>(&iat->u1.Function);
       void* original = *slot;
-      if (original == nullptr) continue;
+      if (original == nullptr || original == replacement) continue;
+      // One hook has one stable call-through target. Do not chain it through
+      // itself or combine imports already owned by different interceptors.
+      if (*original_storage != nullptr && *original_storage != original) continue;
 
       if (*original_storage == nullptr) *original_storage = original;
 
@@ -411,12 +415,13 @@ bool PatchIatSymbol(
         continue;
       }
 
-      InterlockedExchangePointer(
+      const auto observed = InterlockedCompareExchangePointer(
           reinterpret_cast<PVOID volatile*>(slot),
-          replacement);
+          replacement, original);
 
       DWORD ignored = 0u;
       VirtualProtect(slot, sizeof(void*), old_protect, &ignored);
+      if (observed != original) continue;
 
       g_iat_hooks[g_iat_hook_count++] = {
           slot,
@@ -441,11 +446,9 @@ void RestoreIatHooks() {
       continue;
     }
 
-    if (*hook.slot == hook.replacement) {
-      InterlockedExchangePointer(
-          reinterpret_cast<PVOID volatile*>(hook.slot),
-          hook.original);
-    }
+    InterlockedCompareExchangePointer(
+        reinterpret_cast<PVOID volatile*>(hook.slot),
+        hook.original, hook.replacement);
 
     DWORD ignored = 0u;
     VirtualProtect(hook.slot, sizeof(void*), old_protect, &ignored);
@@ -2365,19 +2368,18 @@ bool InstallSoundFsSeekDetour() {
 
   g_original_game_fs_seek = reinterpret_cast<GameFsSeekFn>(
       g_exe_base + MW3_FS_SEEK_RVA);
-  LONG status = DetourTransactionBegin();
+  LONG status = hook_transaction::Begin();
   if (status != NO_ERROR) {
     g_original_game_fs_seek = nullptr;
     return false;
   }
-  status = DetourUpdateThread(GetCurrentThread());
   if (status == NO_ERROR) {
-    status = DetourAttach(
+    status = hook_transaction::Attach(
         reinterpret_cast<PVOID*>(&g_original_game_fs_seek),
         reinterpret_cast<PVOID>(&HookGameFsSeek));
   }
-  if (status == NO_ERROR) status = DetourTransactionCommit();
-  else DetourTransactionAbort();
+  if (status == NO_ERROR) status = hook_transaction::Commit();
+  else hook_transaction::Abort();
 
   const bool ok = status == NO_ERROR;
   g_sound_fs_seek_detoured.store(ok, std::memory_order_release);
@@ -2398,18 +2400,18 @@ bool InstallSoundFsSeekDetour() {
 void RemoveSoundFsSeekDetour() {
   if (g_sound_fs_seek_detoured.load(std::memory_order_acquire)
       && g_original_game_fs_seek != nullptr) {
-    LONG status = DetourTransactionBegin();
-    if (status == NO_ERROR) status = DetourUpdateThread(GetCurrentThread());
+    LONG status = hook_transaction::Begin();
     if (status == NO_ERROR) {
       status = DetourDetach(
           reinterpret_cast<PVOID*>(&g_original_game_fs_seek),
           reinterpret_cast<PVOID>(&HookGameFsSeek));
     }
-    if (status == NO_ERROR) (void)DetourTransactionCommit();
-    else DetourTransactionAbort();
+    if (status == NO_ERROR) status = hook_transaction::Commit();
+    else hook_transaction::Abort();
+    if (status != NO_ERROR) return;
   }
   g_sound_fs_seek_detoured.store(false, std::memory_order_release);
-  g_original_game_fs_seek = nullptr;
+  // Preserve the call-through pointer for callbacks already in flight.
   g_tls_sound_fs_handle = -1;
 }
 
@@ -2441,21 +2443,20 @@ bool InstallZlibNgInflateDetours() {
   g_original_game_inflate_end = reinterpret_cast<GameInflateEndFn>(
       g_exe_base + MW3_ZLIB_INFLATE_END_RVA);
 
-  LONG status = DetourTransactionBegin();
+  LONG status = hook_transaction::Begin();
   if (status != NO_ERROR) return false;
-  status = DetourUpdateThread(GetCurrentThread());
   if (status == NO_ERROR) {
-    status = DetourAttach(
+    status = hook_transaction::Attach(
         reinterpret_cast<PVOID*>(&g_original_game_inflate),
         reinterpret_cast<PVOID>(&HookGameInflate));
   }
   if (status == NO_ERROR) {
-    status = DetourAttach(
+    status = hook_transaction::Attach(
         reinterpret_cast<PVOID*>(&g_original_game_inflate_end),
         reinterpret_cast<PVOID>(&HookGameInflateEnd));
   }
-  if (status == NO_ERROR) status = DetourTransactionCommit();
-  else DetourTransactionAbort();
+  if (status == NO_ERROR) status = hook_transaction::Commit();
+  else hook_transaction::Abort();
 
   const bool ok = status == NO_ERROR;
   g_zng_detours_installed.store(ok, std::memory_order_release);
@@ -2476,11 +2477,11 @@ bool InstallZlibNgInflateDetours() {
 
 void RemoveZlibNgInflateDetoursAndCleanup() {
   RemoveSoundFsSeekDetour();
+  if (g_sound_fs_seek_detoured.load(std::memory_order_acquire)) return;
   if (g_zng_detours_installed.load(std::memory_order_acquire)
       && g_original_game_inflate != nullptr
       && g_original_game_inflate_end != nullptr) {
-    LONG status = DetourTransactionBegin();
-    if (status == NO_ERROR) status = DetourUpdateThread(GetCurrentThread());
+    LONG status = hook_transaction::Begin();
     if (status == NO_ERROR) {
       status = DetourDetach(
           reinterpret_cast<PVOID*>(&g_original_game_inflate),
@@ -2491,12 +2492,12 @@ void RemoveZlibNgInflateDetoursAndCleanup() {
           reinterpret_cast<PVOID*>(&g_original_game_inflate_end),
           reinterpret_cast<PVOID>(&HookGameInflateEnd));
     }
-    if (status == NO_ERROR) (void)DetourTransactionCommit();
-    else DetourTransactionAbort();
+    if (status == NO_ERROR) status = hook_transaction::Commit();
+    else hook_transaction::Abort();
+    if (status != NO_ERROR) return;
   }
   g_zng_detours_installed.store(false, std::memory_order_release);
-  g_original_game_inflate = nullptr;
-  g_original_game_inflate_end = nullptr;
+  // Preserve call-through pointers for callbacks already in flight.
 
   AcquireSRWLockExclusive(&g_zng_table_lock);
   for (auto& slot : g_zng_shadow_slots) {
@@ -2726,16 +2727,15 @@ bool InstallGameCrtReadDetour() {
   g_original_game_crt_read = reinterpret_cast<GameCrtReadFn>(
       g_exe_base + MW3_CRT_READ_RVA);
 
-  LONG status = DetourTransactionBegin();
+  LONG status = hook_transaction::Begin();
   if (status != NO_ERROR) return false;
-  status = DetourUpdateThread(GetCurrentThread());
   if (status == NO_ERROR) {
-    status = DetourAttach(
+    status = hook_transaction::Attach(
         reinterpret_cast<PVOID*>(&g_original_game_crt_read),
         reinterpret_cast<PVOID>(&HookGameCrtRead));
   }
-  if (status == NO_ERROR) status = DetourTransactionCommit();
-  else DetourTransactionAbort();
+  if (status == NO_ERROR) status = hook_transaction::Commit();
+  else hook_transaction::Abort();
 
   const bool ok = status == NO_ERROR;
   g_game_crt_read_detoured.store(ok, std::memory_order_release);
@@ -2749,18 +2749,18 @@ void RemoveGameCrtReadDetour() {
     return;
   }
 
-  LONG status = DetourTransactionBegin();
-  if (status == NO_ERROR) status = DetourUpdateThread(GetCurrentThread());
+  LONG status = hook_transaction::Begin();
   if (status == NO_ERROR) {
     status = DetourDetach(
         reinterpret_cast<PVOID*>(&g_original_game_crt_read),
         reinterpret_cast<PVOID>(&HookGameCrtRead));
   }
-  if (status == NO_ERROR) (void)DetourTransactionCommit();
-  else DetourTransactionAbort();
+  if (status == NO_ERROR) status = hook_transaction::Commit();
+  else hook_transaction::Abort();
 
+  if (status != NO_ERROR) return;
   g_game_crt_read_detoured.store(false, std::memory_order_release);
-  g_original_game_crt_read = nullptr;
+  // Preserve the call-through pointer for callbacks already in flight.
 }
 
 // -----------------------------------------------------------------------------
@@ -2900,10 +2900,14 @@ void OnPresent(
 }
 
 void Shutdown(bool process_terminating) {
+  if (process_terminating) return; // Other threads may have died holding these locks.
   RestoreArchiveThreadPriorityIfCurrent();
   if (!process_terminating) {
     RemoveZlibNgInflateDetoursAndCleanup();
     RemoveGameCrtReadDetour();
+    if (g_zng_detours_installed.load(std::memory_order_acquire) ||
+        g_sound_fs_seek_detoured.load(std::memory_order_acquire) ||
+        g_game_crt_read_detoured.load(std::memory_order_acquire)) return;
     RestoreIatHooks();
     CleanupMappings();
     if (g_tls_high_res_timer != nullptr) {

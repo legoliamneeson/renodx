@@ -10,6 +10,12 @@ struct SavedBlend {
   DWORD separate_alpha = 0, source_alpha = 0, destination_alpha = 0, alpha_op = 0;
 };
 inline thread_local SavedBlend saved;
+inline thread_local bool changing_state = false;
+struct StateChangeScope {
+  bool previous = changing_state;
+  StateChangeScope() { changing_state = true; }
+  ~StateChangeScope() { changing_state = previous; }
+};
 
 inline DWORD AlphaFactor(DWORD factor) {
   if (factor == D3DBLEND_SRCCOLOR) return D3DBLEND_SRCALPHA;
@@ -21,6 +27,7 @@ inline DWORD AlphaFactor(DWORD factor) {
 
 inline void RestoreState(const SavedBlend& state) {
   if (state.device == nullptr) return;
+  StateChangeScope change_scope;
   state.device->SetRenderState(D3DRS_SRCBLEND, state.source);
   state.device->SetRenderState(D3DRS_DESTBLEND, state.destination);
   state.device->SetRenderState(D3DRS_SRCBLENDALPHA, state.source_alpha);
@@ -57,8 +64,11 @@ struct NativeDrawScope {
 };
 
 inline bool Begin(reshade::api::command_list* cmd, bool hdr) {
-  if (!hdr || cmd->get_device()->get_api() != reshade::api::device_api::d3d9) return true;
+  if (!hdr || changing_state || cmd == nullptr || cmd->get_device() == nullptr ||
+      cmd->get_device()->get_api() != reshade::api::device_api::d3d9) return true;
+  StateChangeScope change_scope;
   auto* device = reinterpret_cast<IDirect3DDevice9*>(cmd->get_device()->get_native());
+  if (device == nullptr || saved.device != nullptr) return true;
   DWORD enabled = 0, operation = 0;
   SavedBlend state;
   if (FAILED(device->GetRenderState(D3DRS_ALPHABLENDENABLE, &enabled)) || !enabled

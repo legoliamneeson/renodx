@@ -53,6 +53,7 @@
 #include "./mw3_frame_deadline.hpp"
 #include "mw3_precise_wait.hpp"
 #include "./half_filter.hpp"
+#include "./hook_transaction.hpp"
 
 #ifndef RENODX_PSYCHOV24_SLIDER_LAYOUT_VERSION
 #error "CODBLOPS: shared.h is outdated. Replace shared.h with the PsychoV24 slider version from the same package."
@@ -163,11 +164,12 @@ bool EqualAsciiInsensitive(const char* a, const char* b) {
   return *a == '\0' && *b == '\0';
 }
 
+template<class Fn>
 bool FindAndPatchMainExeIAT(
     const char* imported_dll,
     const char* imported_name,
     void* replacement,
-    IATHook& hook) {
+    IATHook& hook, Fn& original_storage) {
   if (imported_dll == nullptr || imported_name == nullptr || replacement == nullptr) {
     return false;
   }
@@ -215,17 +217,25 @@ bool FindAndPatchMainExeIAT(
       auto* slot = reinterpret_cast<uintptr_t*>(&iat_thunk->u1.Function);
       const uintptr_t original = *slot;
       const uintptr_t replacement_value = reinterpret_cast<uintptr_t>(replacement);
+      if (!original || original == replacement_value) return false;
+      // Publish a stable call-through target BEFORE the hook becomes reachable.
+      // Keep it alive on rollback for callbacks already in flight.
+      if (original_storage != nullptr &&
+          reinterpret_cast<uintptr_t>(original_storage) != original) return false;
+      original_storage = reinterpret_cast<Fn>(original);
 
       DWORD old_protect = 0u;
       if (!VirtualProtect(slot, sizeof(uintptr_t), PAGE_READWRITE, &old_protect)) {
         return false;
       }
 
-      *slot = replacement_value;
-      FlushInstructionCache(GetCurrentProcess(), slot, sizeof(uintptr_t));
+      const auto observed = InterlockedCompareExchangePointer(
+          reinterpret_cast<PVOID volatile*>(slot), replacement,
+          reinterpret_cast<void*>(original));
 
       DWORD ignored = 0u;
       VirtualProtect(slot, sizeof(uintptr_t), old_protect, &ignored);
+      if (observed != reinterpret_cast<void*>(original)) return false;
 
       hook.slot = slot;
       hook.original = original;
@@ -245,10 +255,8 @@ void RestoreIATHook(IATHook& hook) {
 
   DWORD old_protect = 0u;
   if (VirtualProtect(hook.slot, sizeof(uintptr_t), PAGE_READWRITE, &old_protect)) {
-    if (*hook.slot == hook.replacement) {
-      *hook.slot = hook.original;
-      FlushInstructionCache(GetCurrentProcess(), hook.slot, sizeof(uintptr_t));
-    }
+    InterlockedCompareExchangePointer(reinterpret_cast<PVOID volatile*>(hook.slot),
+        reinterpret_cast<void*>(hook.original), reinterpret_cast<void*>(hook.replacement));
     DWORD ignored = 0u;
     VirtualProtect(hook.slot, sizeof(uintptr_t), old_protect, &ignored);
   }
@@ -612,18 +620,17 @@ bool InstallCLMouseEventHook() {
   g_original_cl_mouse_event = reinterpret_cast<CLMouseEventFn>(
       module + kCLMouseEventRva);
 
-  if (DetourTransactionBegin() != NO_ERROR) return false;
-  DetourUpdateThread(GetCurrentThread());
-  const LONG attach = DetourAttach(
+  if (hook_transaction::Begin() != NO_ERROR) return false;
+  const LONG attach = hook_transaction::Attach(
       reinterpret_cast<PVOID*>(&g_original_cl_mouse_event),
       reinterpret_cast<PVOID>(&HookCLMouseEvent));
   if (attach != NO_ERROR) {
-    DetourTransactionAbort();
+    hook_transaction::Abort();
     g_original_cl_mouse_event = nullptr;
     return false;
   }
 
-  const LONG commit = DetourTransactionCommit();
+  const LONG commit = hook_transaction::Commit();
   if (commit != NO_ERROR) {
     g_original_cl_mouse_event = nullptr;
     return false;
@@ -636,21 +643,22 @@ bool InstallCLMouseEventHook() {
 }
 
 void RemoveCLMouseEventHook() {
-  if (!g_cl_mouse_hook_installed.exchange(false, std::memory_order_acq_rel)) return;
+  if (!g_cl_mouse_hook_installed.load(std::memory_order_acquire)) return;
   if (g_original_cl_mouse_event == nullptr) return;
 
-  if (DetourTransactionBegin() == NO_ERROR) {
-    DetourUpdateThread(GetCurrentThread());
+  if (hook_transaction::Begin() == NO_ERROR) {
     if (DetourDetach(
             reinterpret_cast<PVOID*>(&g_original_cl_mouse_event),
             reinterpret_cast<PVOID>(&HookCLMouseEvent)) == NO_ERROR) {
-      DetourTransactionCommit();
+      if (hook_transaction::Commit() == NO_ERROR)
+        g_cl_mouse_hook_installed.store(false, std::memory_order_release);
     } else {
-      DetourTransactionAbort();
+      hook_transaction::Abort();
     }
   }
 
-  g_original_cl_mouse_event = nullptr;
+  // Keep a valid call-through for callbacks already in flight. Failed detach
+  // leaves the installed flag and trampoline intact.
 }
 
 bool InstallMessageHooks() {
@@ -659,26 +667,16 @@ bool InstallMessageHooks() {
   const bool peek_message = FindAndPatchMainExeIAT(
       "user32.dll", "PeekMessageA",
       reinterpret_cast<void*>(&HookPeekMessageA),
-      g_peek_message_hook);
-  if (peek_message) {
-    g_original_peek_message_a = reinterpret_cast<PeekMessageAFn>(
-        g_peek_message_hook.original);
-  }
+      g_peek_message_hook, g_original_peek_message_a);
 
   const bool get_message = FindAndPatchMainExeIAT(
       "user32.dll", "GetMessageA",
       reinterpret_cast<void*>(&HookGetMessageA),
-      g_get_message_hook);
-  if (get_message) {
-    g_original_get_message_a = reinterpret_cast<GetMessageAFn>(
-        g_get_message_hook.original);
-  }
+      g_get_message_hook, g_original_get_message_a);
 
   if (!peek_message || !get_message) {
     RestoreIATHook(g_get_message_hook);
     RestoreIATHook(g_peek_message_hook);
-    g_original_peek_message_a = nullptr;
-    g_original_get_message_a = nullptr;
     return false;
   }
 
@@ -687,11 +685,13 @@ bool InstallMessageHooks() {
 }
 
 bool InstallHooks() {
+  static std::atomic<bool> attempted{false};
+  if (attempted.exchange(true, std::memory_order_acq_rel))
+    return g_iat_hooks_installed.load(std::memory_order_acquire) &&
+           g_cl_mouse_hook_installed.load(std::memory_order_acquire);
   if (!InstallMessageHooks() || !InstallCLMouseEventHook()) {
     RestoreIATHook(g_get_message_hook);
     RestoreIATHook(g_peek_message_hook);
-    g_original_peek_message_a = nullptr;
-    g_original_get_message_a = nullptr;
     g_iat_hooks_installed.store(false, std::memory_order_release);
     RemoveCLMouseEventHook();
 
@@ -773,8 +773,6 @@ void Shutdown() {
 
   RestoreIATHook(g_get_message_hook);
   RestoreIATHook(g_peek_message_hook);
-  g_original_peek_message_a = nullptr;
-  g_original_get_message_a = nullptr;
   g_iat_hooks_installed.store(false, std::memory_order_release);
   g_game_hwnd.store(0u, std::memory_order_release);
 }
@@ -5793,8 +5791,15 @@ extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX (Ge
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   switch (fdw_reason) {
-    case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH: {
+      // Hooks and in-flight callbacks require process-lifetime module storage.
+      // Do this before registering callbacks; do not detach live hooks in DllMain.
+      HMODULE pinned = nullptr;
+      if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                             reinterpret_cast<LPCWSTR>(&DllMain), &pinned)) return FALSE;
       if (!reshade::register_addon(h_module)) return FALSE;
+      reshade::log::message(reshade::log::level::info,
+          "[MW3 Hook Safety v1] Serialized native transactions; guarded draw reentry; HDR bloom ON; crash recorder OFF.");
         mw3_microstutter::SetLogger(&MW3MicrostutterLog);
 
       if (!initialized) {
@@ -6423,7 +6428,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         }
 
         {
-          auto* setting = new renodx::utils::settings::Setting{
+         auto* setting = new renodx::utils::settings::Setting{
               .key = "SwapChainDeviceProxyBaseWaitIdle",
               .value_type = renodx::utils::settings::SettingValueType::INTEGER,
               .default_value = 1.f,
@@ -6562,6 +6567,7 @@ for (const auto old_format : scene_intermediate_formats) {
         initialized = true;
       }
       break;
+    }
     case DLL_PROCESS_DETACH: {
       g_reshade_overlay_open.store(false, std::memory_order_release);
 

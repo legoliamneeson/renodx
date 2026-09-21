@@ -3,8 +3,9 @@
 #include <TlHelp32.h>
 #include <detours.h>
 #include <array>
-// Collect handles before preparing hooks. Suspend/enlist only after Attach has
-// allocated its trampolines; keep handles alive until commit/abort resumes them.
+#include <cstdint>
+// Suspend/enlist only after Attach has allocated its trampolines; keep handles
+// alive until commit/abort resumes them. Refuse to relocate a live prologue.
 namespace hook_transaction {
 struct Threads {
   std::array<HANDLE, 2048> handles{};
@@ -30,23 +31,55 @@ struct Threads {
     return result;
   }
 };
-inline thread_local Threads threads;
+// One transaction per add-on. Do not block a render thread behind an installer,
+// and do not create a large dynamically initialized TLS object inside a hook.
+inline Threads threads;
+inline volatile LONG owner = 0;
+inline std::array<uintptr_t, 32> targets{};
+inline size_t target_count = 0;
 inline LONG Begin() {
-  if(threads.active) return ERROR_INVALID_OPERATION;
-  LONG result=threads.Collect(); if(result!=NO_ERROR) return result;
-  result=DetourTransactionBegin();
-  if(result==NO_ERROR) threads.active=true; else threads.Close();
+  if(InterlockedCompareExchange(&owner, static_cast<LONG>(GetCurrentThreadId()), 0) != 0)
+    return ERROR_BUSY;
+  LONG result=DetourTransactionBegin();
+  if(result==NO_ERROR) { threads.active=true; target_count=0; }
+  else InterlockedExchange(&owner, 0);
+  return result;
+}
+inline LONG Attach(PVOID* original, PVOID replacement) {
+  if(InterlockedCompareExchange(&owner, 0, 0) != static_cast<LONG>(GetCurrentThreadId()) || !threads.active)
+    return ERROR_INVALID_OPERATION;
+  if(!original || !*original || !replacement || *original == replacement || target_count==targets.size())
+    return ERROR_INVALID_PARAMETER;
+  auto* target = DetourCodeFromPointer(*original, nullptr);
+  if(!target || target == DetourCodeFromPointer(replacement, nullptr)) return ERROR_INVALID_PARAMETER;
+  for(size_t i=0;i<target_count;++i) if(targets[i]==reinterpret_cast<uintptr_t>(target)) return ERROR_INVALID_PARAMETER;
+  const LONG result=DetourAttach(original, replacement);
+  if(result==NO_ERROR) targets[target_count++]=reinterpret_cast<uintptr_t>(target);
   return result;
 }
 inline LONG Abort() {
-  if(!threads.active) return ERROR_INVALID_OPERATION;
-  LONG result=DetourTransactionAbort(); threads.active=false; threads.Close(); return result;
+  if(InterlockedCompareExchange(&owner, 0, 0) != static_cast<LONG>(GetCurrentThreadId()) || !threads.active)
+    return ERROR_INVALID_OPERATION;
+  LONG result=DetourTransactionAbort(); threads.active=false; threads.Close();
+  InterlockedExchange(&owner, 0); return result;
 }
 inline LONG Commit() {
-  if(!threads.active) return ERROR_INVALID_OPERATION;
-  LONG result=NO_ERROR;
+  if(InterlockedCompareExchange(&owner, 0, 0) != static_cast<LONG>(GetCurrentThreadId()) || !threads.active)
+    return ERROR_INVALID_OPERATION;
+  // Take a fresh snapshot after trampoline allocation, immediately before
+  // enlistment. Any failure aborts the entire transaction without patching.
+  LONG result=threads.Collect();
   for(size_t i=0;result==NO_ERROR && i<threads.count;++i) result=DetourUpdateThread(threads.handles[i]);
+  // Avoid resuming a thread at a translated instruction inside a trampoline.
+  // 64 bytes conservatively covers the x64 entry patch and nearby prologue.
+  for(size_t i=0;result==NO_ERROR && i<threads.count;++i) {
+    CONTEXT context{}; context.ContextFlags=CONTEXT_CONTROL;
+    if(!GetThreadContext(threads.handles[i], &context)) { result=GetLastError(); break; }
+    for(size_t j=0;j<target_count;++j)
+      if(context.Rip>=targets[j] && context.Rip-targets[j]<64) { result=ERROR_BUSY; break; }
+  }
   if(result!=NO_ERROR) { Abort(); return result; }
-  result=DetourTransactionCommit(); threads.active=false; threads.Close(); return result;
+  result=DetourTransactionCommit(); threads.active=false; threads.Close();
+  InterlockedExchange(&owner, 0); return result;
 }
 }
