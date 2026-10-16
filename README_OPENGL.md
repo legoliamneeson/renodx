@@ -56,8 +56,21 @@ The backend changes live in `patches/reshade-opengl.patch` and target ReShade
 
 Install Visual Studio 2022 with Desktop development with C++, v143 tools,
 Windows SDK **10.0.26100.0**, LLVM/clang-cl, CMake and Ninja; also install Git
-and Python 3. Use a VS developer PowerShell targeting the game's architecture.
-Run the following commands from the repository root.
+and Python 3. Run everything from the repository root in a VS developer
+PowerShell for the architecture you are building (x86 for 32-bit, x64 for 64-bit).
+
+Everything, the addons and the patched ReShade `opengl32.dll`, builds with
+RenoDX's normal presets:
+
+| | 32-bit (x86) | 64-bit (x64) |
+| --- | --- | --- |
+| Configure | `cmake --preset clang-x86` | `cmake --preset clang-x64` |
+| Build | `cmake --build --preset clang-x86-release --target <target>` | `cmake --build --preset clang-x64-release --target <target>` |
+| Output folder | `build32\Release\` | `build\Release\` |
+
+Configure once per architecture, and again after adding a new addon folder.
+`<target>` is an addon folder name under `src\games\` or `src\addons\`, or
+`reshade_opengl` for the patched ReShade DLL.
 
 ### One-time dependency setup
 
@@ -71,101 +84,56 @@ Do not add `--force` or `--remote` to the submodule command: `--force` discards
 an applied ReShade patch and `--remote` moves off RenoDX's pinned revisions.
 Pass Tools as a PowerShell array as shown.
 
-### 32-bit OpenGL DevKit
-
-Configure once, or again after adding a new addon target:
+### Addons
 
 ```powershell
 cmake --preset clang-x86
+cmake --build --preset clang-x86-release --target doom3          # build32\Release\renodx-doom3.addon32
+cmake --build --preset clang-x86-release --target devkit_opengl  # build32\Release\renodx-devkit_opengl.addon32
 ```
 
-Build using RenoDX's normal Release build preset:
+Use `clang-x64` / `clang-x64-release` for 64-bit games; outputs end in
+`.addon64` under `build\Release\`. Rebuild every RenoDX addon you load together
+so they share the same allocator and injection code.
+
+### Patched ReShade: 32-bit and 64-bit `opengl32.dll`
+
+The OpenGL replacement path needs ReShade built with
+`patches/reshade-opengl.patch`; stock ReShade lacks the replacement export.
+The `reshade_opengl` target does the whole job:
 
 ```powershell
-cmake --build --preset clang-x86-release --target devkit_opengl
-```
-
-Output: `build32\Release\renodx-devkit_opengl.addon32`.
-
-### 32-bit Doom 3 addon
-
-The Doom 3 addon lives in `src\games\doom3`. Configure and build:
-
-```powershell
+# 32-bit (x86 developer shell)
 cmake --preset clang-x86
-cmake --build --preset clang-x86-release --target doom3
-```
+cmake --build --preset clang-x86-release --target reshade_opengl  # build32\Release\opengl32.dll
 
-Output: `build32\Release\renodx-doom3.addon32`.
-The OpenGL DevKit
-and the Doom 3 game addon are separate targets, so build both when using both.
-For subsequent Doom 3 rebuilds, use just:
-
-```powershell
-cmake --build --preset clang-x86-release --target doom3
-```
-
-### 64-bit OpenGL DevKit
-
-In a developer PowerShell targeting x64:
-
-```powershell
+# 64-bit (x64 developer shell)
 cmake --preset clang-x64
-cmake --build --preset clang-x64-release --target devkit_opengl
+cmake --build --preset clang-x64-release --target reshade_opengl  # build\Release\opengl32.dll
 ```
 
-Output: `build\Release\renodx-devkit_opengl.addon64`.
-For another game addon, replace `devkit_opengl` with its actual target name
-and use the architecture supported by that addon and game executable.
+The target fetches ReShade's git tags if they are missing (ReShade reads its
+version from them), applies the patch to `external/reshade` once (later builds
+detect it as applied), builds ReShade's own solution with MSBuild in Release, checks
+the DLL contains the RenoOGL export, and copies `ReShade32.dll` / `ReShade64.dll`
+to `opengl32.dll` next to your addons. It is not part of a plain
+`cmake --build --preset ...`, so CI and full builds are unchanged.
 
-The configure presets are `clang-x86` / `clang-x64`; the Release **build**
-presets are `clang-x86-release` / `clang-x64-release`. These addon commands
-use clang-cl. Rebuild each game addon to include the shared injection and
-alignment fixes; rebuilding only the DevKit does not update game addons.
+After this, `git status` shows `external/reshade` as modified. That is the
+applied patch; do not commit the submodule. To return it to stock:
+`git -C external/reshade checkout -- .` and
+`git -C external/reshade clean -fd -- source/opengl`.
 
-### Patched ReShade DLL: separate build
-
-The RenoDX CMake targets above build addons. They do not build the patched
-ReShade DLL required by this OpenGL replacement path. The simplest route is the
-wrapper, which initializes submodules, applies the patch once, builds ReShade
-and the OpenGL DevKit, and stages them in `dist\opengl\<arch>`:
-
-```powershell
-.\scripts\build-opengl.ps1 -Architecture x86   # or x64; add -GameTarget <target>
-```
-
-To build ReShade by hand instead, apply the patch first (skip this if
-`git -C external/reshade apply --ignore-whitespace --reverse --check ..\..\patches\reshade-opengl.patch`
-succeeds, meaning it is already applied). `--ignore-whitespace` is needed when
-Git checks files out with CRLF line endings:
-
-```powershell
-git -C external/reshade apply --ignore-whitespace ..\..\patches\reshade-opengl.patch
-
-# 32-bit ReShade
-msbuild .\external\reshade\ReShade.sln /t:ReShade /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143
-
-# 64-bit ReShade (use an x64 developer shell)
-msbuild .\external\reshade\ReShade.sln /t:ReShade /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
-```
-
-Outputs are `external\reshade\bin\Win32\Release\ReShade32.dll` and
-`external\reshade\bin\x64\Release\ReShade64.dll`. Rename the matching DLL to
-`opengl32.dll` when installing beside the game executable. Use **Release**, not
-the restricted-addon `Release Signed`. ReShade reads its version from the
-submodule's git tags; if a shallow clone has no tags, run
-`git -C external/reshade fetch --tags` (the wrapper does this for you).
-
-To return the submodule to stock: `git -C external/reshade checkout -- .` and
-`git -C external/reshade clean -fd -- source/opengl`. Rebuild all RenoDX addons
-loaded together so they use the same shared allocator implementation.
+`scripts\build-opengl.ps1 -Architecture x86|x64 [-GameTarget <target>]` runs the
+same steps and also copies everything into `dist\opengl\<arch>`.
 
 ## Install and inspect
 
-1. Back up the game's existing local ReShade DLL/addons. Copy the matching ReShade DLL
-   from the build output listed above beside the game executable and name it
-   `opengl32.dll`. Copy `renodx-devkit_opengl.addon32` or `.addon64` from its
-   corresponding build output beside it. Do not copy either into a Windows system folder.
+1. Back up the game's existing local ReShade DLL/addons. Match the game
+   executable's architecture (Doom 3 is 32-bit): copy `opengl32.dll` and the
+   addons you need (`renodx-devkit_opengl.addon32`, `renodx-doom3.addon32`, ...)
+   from `build32\Release\` (or `build\Release\` for 64-bit) into the folder
+   that contains the game's `.exe`. Do not copy them into a Windows system folder.
 2. Use this DevKit **instead of** the normal DevKit. Use the patched ReShade
    built from this tree; stock ReShade lacks the replacement export. You can
    also load a rebuilt game-specific RenoDX addon to supply its settings buffer.

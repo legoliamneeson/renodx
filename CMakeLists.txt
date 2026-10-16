@@ -669,6 +669,32 @@ add_custom_command(
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/external/Detours/src/detours.cpp
 )
 
+# RenoOGL: patched ReShade, staged as <build dir>/<config>/opengl32.dll next to the addons.
+# Not part of the default build: cmake --build --preset clang-x86-release --target reshade_opengl
+if(RENODX_TARGET_ARCHITECTURE MATCHES "^(x86|x64)$")
+  find_package(Git QUIET)
+  if(RENODX_TARGET_ARCHITECTURE STREQUAL "x86")
+    set(RESHADE_OPENGL_PLATFORM "Win32")
+    set(RESHADE_OPENGL_BITS "32")
+  else()
+    set(RESHADE_OPENGL_PLATFORM "x64")
+    set(RESHADE_OPENGL_BITS "64")
+  endif()
+  add_custom_target(reshade_opengl
+    COMMAND ${CMAKE_COMMAND}
+      -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+      -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>
+      -DPLATFORM=${RESHADE_OPENGL_PLATFORM}
+      -DBITS=${RESHADE_OPENGL_BITS}
+      -DVCVARS_BAT=${VCVARS_BAT}
+      -DVCVARS_ARG=${VCVARS_ARG}
+      -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/reshade-opengl.cmake
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    USES_TERMINAL
+    VERBATIM)
+endif()
+
 add_library(detours STATIC IMPORTED GLOBAL)
 set_target_properties(detours PROPERTIES
   IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/external/Detours/lib.${DETOURS_ARCH}/detours.lib
