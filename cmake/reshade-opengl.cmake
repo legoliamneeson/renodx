@@ -9,7 +9,7 @@
 #   4. Copy ReShade32.dll / ReShade64.dll to <OUTPUT_DIR>/opengl32.dll.
 #
 # Required -D variables: SOURCE_DIR, OUTPUT_DIR, PLATFORM (Win32|x64), BITS (32|64),
-# VCVARS_BAT, VCVARS_ARG, GIT_EXECUTABLE.
+# VCVARS_BAT (fallback), VCVARS_ARG, GIT_EXECUTABLE. Optional: VSWHERE_EXECUTABLE.
 
 foreach(VAR SOURCE_DIR OUTPUT_DIR PLATFORM BITS GIT_EXECUTABLE)
   if(NOT DEFINED ${VAR} OR "${${VAR}}" STREQUAL "")
@@ -54,8 +54,47 @@ if(NOT ALREADY_APPLIED EQUAL 0)
   message(STATUS "Applied patches/reshade-opengl.patch to external/reshade")
 endif()
 
-# ReShade.vcxproj defaults to the v141 toolset; build with VS 2022's v143.
-set(MSBUILD_ARGS "\"${RESHADE_DIR}/ReShade.sln\" /t:ReShade /m /nologo /v:minimal /p:Configuration=Release /p:Platform=${PLATFORM} /p:PlatformToolset=v143")
+# ReShade.vcxproj defaults to the v141 toolset, which current Visual Studio does not
+# ship. Pick an installed Visual Studio (2022 Build Tools, 2026 Community, ...) that
+# has a v14x toolset for this platform, preferring v143, and use its vcvarsall.
+set(SELECTED_VS "")
+set(SELECTED_TOOLSET "")
+if(VSWHERE_EXECUTABLE AND EXISTS "${VSWHERE_EXECUTABLE}")
+  execute_process(
+    COMMAND "${VSWHERE_EXECUTABLE}" -all -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    OUTPUT_VARIABLE VS_PATHS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  string(REPLACE "\r" "" VS_PATHS "${VS_PATHS}")
+  string(REPLACE "\n" ";" VS_PATHS "${VS_PATHS}")
+  foreach(VS_PATH IN LISTS VS_PATHS)
+    file(TO_CMAKE_PATH "${VS_PATH}" VS_PATH)
+    if(NOT EXISTS "${VS_PATH}/VC/Auxiliary/Build/vcvarsall.bat")
+      continue()
+    endif()
+    file(GLOB TOOLSET_DIRS LIST_DIRECTORIES true "${VS_PATH}/MSBuild/Microsoft/VC/*/Platforms/${PLATFORM}/PlatformToolsets/v14*")
+    foreach(TOOLSET_DIR IN LISTS TOOLSET_DIRS)
+      get_filename_component(TOOLSET "${TOOLSET_DIR}" NAME)
+      if(NOT TOOLSET MATCHES "^v14[0-9]$" OR NOT IS_DIRECTORY "${TOOLSET_DIR}")
+        continue()
+      endif()
+      if(SELECTED_TOOLSET STREQUAL "v143")
+        break()
+      endif()
+      if(TOOLSET STREQUAL "v143" OR SELECTED_TOOLSET STREQUAL "" OR TOOLSET STRGREATER SELECTED_TOOLSET)
+        set(SELECTED_TOOLSET "${TOOLSET}")
+        set(SELECTED_VS "${VS_PATH}")
+      endif()
+    endforeach()
+  endforeach()
+endif()
+if(SELECTED_VS)
+  set(VCVARS_BAT "${SELECTED_VS}/VC/Auxiliary/Build/vcvarsall.bat")
+  message(STATUS "Building ReShade with ${SELECTED_TOOLSET} from ${SELECTED_VS}")
+else()
+  set(SELECTED_TOOLSET "v143")
+  message(STATUS "No Visual Studio toolset detected through vswhere; trying v143")
+endif()
+
+set(MSBUILD_ARGS "\"${RESHADE_DIR}/ReShade.sln\" /t:ReShade /m /nologo /v:minimal /p:Configuration=Release /p:Platform=${PLATFORM} /p:PlatformToolset=${SELECTED_TOOLSET}")
 set(BUILD_SCRIPT "${OUTPUT_DIR}/reshade-opengl-build.cmd")
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 if(EXISTS "${VCVARS_BAT}")

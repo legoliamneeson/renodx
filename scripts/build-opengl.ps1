@@ -2,7 +2,7 @@
 then stage them in dist\opengl\<arch>. Equivalent to:
   cmake --preset clang-<arch>
   cmake --build --preset clang-<arch>-release --target reshade_opengl   (and devkit_opengl, <GameTarget>)
-Run in a VS 2022 developer PowerShell for the requested target architecture.
+Needs CMake, Ninja, LLVM (clang-cl), Git and Python on PATH; no developer shell required.
 Nothing is installed into a game automatically. #>
 param(
   [ValidateSet('x64', 'x86')][string]$Architecture = 'x64',
@@ -20,11 +20,8 @@ Push-Location $root
 try {
   foreach ($command in @('git', 'python', 'cmake', 'ninja', 'clang-cl')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
-      throw "$command is missing. Use a VS 2022 developer PowerShell with C++, LLVM, CMake/Ninja and Python installed."
+      throw "$command is missing. Install it and make sure it is on PATH (see docs/CONTRIBUTING.md; for Ninja: winget install Ninja-build.Ninja)."
     }
-  }
-  if ($env:VSCMD_ARG_TGT_ARCH -ne $Architecture) {
-    throw "Open a VS developer PowerShell targeting $Architecture; current target is '$env:VSCMD_ARG_TGT_ARCH'."
   }
   if (-not $SkipDependencies) {
     # No --force / --remote: keep an already patched ReShade and pinned dependency revisions.

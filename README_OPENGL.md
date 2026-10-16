@@ -54,10 +54,23 @@ The backend changes live in `patches/reshade-opengl.patch` and target ReShade
 
 ## Build on Windows with RenoDX CMake presets
 
-Install Visual Studio 2022 with Desktop development with C++, v143 tools,
-Windows SDK **10.0.26100.0**, LLVM/clang-cl, CMake and Ninja; also install Git
-and Python 3. Run everything from the repository root in a VS developer
-PowerShell for the architecture you are building (x86 for 32-bit, x64 for 64-bit).
+Install the tools listed in [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md):
+Visual Studio 2022 Build Tools (or Visual Studio) with the C++ workload and v143
+toolset, Windows SDK **10.0.26100.0**+, plus standalone **CMake**, **LLVM**
+(clang-cl) and **Ninja** on your PATH, and Git and Python 3. With those on PATH a
+normal PowerShell window works; you do not need a Visual Studio developer shell.
+
+Ninja is the one most often missing, because Visual Studio only puts its own copy
+on PATH inside its developer shells. Install it once and open a new window:
+
+```powershell
+winget install Ninja-build.Ninja
+where.exe ninja; where.exe clang-cl   # both must print a path
+```
+
+If configure fails with `unable to find a build program corresponding to "Ninja
+Multi-Config"`, Ninja is not on PATH: fix that, delete `build32` (or `build`),
+then run the configure command again.
 
 Everything, the addons and the patched ReShade `opengl32.dll`, builds with
 RenoDX's normal presets:
@@ -103,18 +116,19 @@ The OpenGL replacement path needs ReShade built with
 The `reshade_opengl` target does the whole job:
 
 ```powershell
-# 32-bit (x86 developer shell)
+# 32-bit
 cmake --preset clang-x86
 cmake --build --preset clang-x86-release --target reshade_opengl  # build32\Release\opengl32.dll
 
-# 64-bit (x64 developer shell)
+# 64-bit
 cmake --preset clang-x64
 cmake --build --preset clang-x64-release --target reshade_opengl  # build\Release\opengl32.dll
 ```
 
 The target fetches ReShade's git tags if they are missing (ReShade reads its
 version from them), applies the patch to `external/reshade` once (later builds
-detect it as applied), builds ReShade's own solution with MSBuild in Release, checks
+detect it as applied), builds ReShade's own solution with MSBuild in Release using
+an installed Visual Studio that has a v14x toolset (v143 preferred), checks
 the DLL contains the RenoOGL export, and copies `ReShade32.dll` / `ReShade64.dll`
 to `opengl32.dll` next to your addons. It is not part of a plain
 `cmake --build --preset ...`, so CI and full builds are unchanged.
