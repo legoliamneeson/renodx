@@ -139,6 +139,35 @@ static std::optional<bool> GetReplaceOnBindPolicy() {
   return internal::shared.data->use_replace_on_bind;
 }
 
+// The optional backend export preserves native GL program state and schedules a
+// replacement only around a draw. Stock ReShade cannot safely provide this path.
+inline bool CreateReplacementPipeline(
+    reshade::api::device* device, reshade::api::pipeline original,
+    reshade::api::pipeline_layout layout, uint32_t count,
+    const reshade::api::pipeline_subobject* subobjects, reshade::api::pipeline* output) {
+  *output = {};
+  if (device->get_api() != reshade::api::device_api::opengl) {
+    return device->create_pipeline(layout, count, subobjects, output);
+  }
+  using Create = bool (*)(reshade::api::device*, reshade::api::pipeline, uint32_t,
+                          const reshade::api::pipeline_subobject*, reshade::api::pipeline*);
+  static const auto create = reinterpret_cast<Create>(GetProcAddress(
+      reshade::internal::get_reshade_module_handle(), "ReShadeCreateOpenGLPipelineReplacement"));
+  if (create == nullptr) {
+    reshade::log::message(reshade::log::level::error,
+                          "OpenGL replacement needs the patched RenoOGL ReShade build. Original retained.");
+    return false;
+  }
+  const bool created = create(device, original, count, subobjects, output);
+  if (!created) {
+    reshade::log::message(reshade::log::level::error,
+                          "RenoDX OpenGL replacement program failed to compile/link; retaining original. "
+                          "Check the driver log, stage interfaces, and GLSL/SPIR-V compatibility. "
+                          "Legacy ARB assembly is not supported by this backend.");
+  }
+  return created;
+}
+
 }  // namespace renodx::utils::shader
 
 namespace renodx::utils::pipeline {
@@ -270,8 +299,8 @@ inline PipelineShaderDetails::PipelineShaderDetails(
       create_layout = this->replacement_layout;
     }
 
-    const bool built_pipeline_ok = device->create_pipeline(
-        create_layout,
+    const bool built_pipeline_ok = renodx::utils::shader::CreateReplacementPipeline(
+        device, pipeline, create_layout,
         subobject_count,
         replacement_subobjects,
         &new_pipeline);
@@ -511,7 +540,7 @@ static bool WithReplacementPipeline(const reshade::api::pipeline& pipeline, F&& 
     if (replacement_layout.handle != 0u) {
       layout = replacement_layout;
     }
-    built = device->create_pipeline(layout, subobject_count, subobjects, &candidate);
+    built = CreateReplacementPipeline(device, pipeline, layout, subobject_count, subobjects, &candidate);
   }
   if (subobjects != nullptr) {
     pipeline::DestroyPipelineSubobjects(subobjects, subobject_count);
@@ -579,6 +608,33 @@ inline void ApplyDispatchReplacements(reshade::api::command_list* cmd_list, [[ma
 inline void ApplyDrawReplacements(reshade::api::command_list* cmd_list, [[maybe_unused]] CommandListData* cmd_list_data) {
   ApplyBoundReplacement(cmd_list, reshade::api::pipeline_stage::vertex_shader);
   ApplyBoundReplacement(cmd_list, reshade::api::pipeline_stage::pixel_shader);
+}
+
+// A file/selection may change without another glUseProgram call.
+inline void RefreshOpenGLReplacement(reshade::api::command_list* cmd_list, bool compute) {
+  if (cmd_list->get_device()->get_api() != reshade::api::device_api::opengl) return;
+  if (compute) {
+    ApplyDispatchReplacements(cmd_list, nullptr);
+  } else {
+    ApplyDrawReplacements(cmd_list, nullptr);
+  }
+}
+inline bool OnOpenGLDraw(reshade::api::command_list* cmd_list, uint32_t, uint32_t, uint32_t, uint32_t) {
+  RefreshOpenGLReplacement(cmd_list, false);
+  return false;
+}
+inline bool OnOpenGLDrawIndexed(reshade::api::command_list* cmd_list, uint32_t, uint32_t, uint32_t, int32_t, uint32_t) {
+  RefreshOpenGLReplacement(cmd_list, false);
+  return false;
+}
+inline bool OnOpenGLDispatch(reshade::api::command_list* cmd_list, uint32_t, uint32_t, uint32_t) {
+  RefreshOpenGLReplacement(cmd_list, true);
+  return false;
+}
+inline bool OnOpenGLIndirect(reshade::api::command_list* cmd_list, reshade::api::indirect_command type,
+                             reshade::api::resource, uint64_t, uint32_t, uint32_t) {
+  RefreshOpenGLReplacement(cmd_list, type == reshade::api::indirect_command::dispatch);
+  return false;
 }
 
 namespace internal {
@@ -804,6 +860,8 @@ static bool OnCreatePipeline(
     reshade::api::pipeline_layout layout,
     uint32_t subobject_count,
     const reshade::api::pipeline_subobject* subobjects) {
+  // OpenGL replacements are built by the patched backend around draws, not at program creation.
+  if (device->get_api() == reshade::api::device_api::opengl) return false;
   if (!internal::shared.data->use_replace_on_create) return false;
   if (internal::shared.data->use_replace_async) return false;
   if (layout.handle == 0u) {
@@ -884,7 +942,9 @@ static void OnInitPipeline(
       {pipeline_info->shader_details.data(), pipeline_info->shader_details.size()},
       {pipeline_info->replaced_shader_subobject_indexes.data(), pipeline_info->replaced_shader_subobject_indexes.size()});
 
-  if (pipeline::internal::shared.data->cache_subobjects && subobject_count != 0u) {
+  // OpenGL always keeps subobjects so a changed selection can be rebuilt without a new program.
+  if ((pipeline::internal::shared.data->cache_subobjects || device->get_api() == reshade::api::device_api::opengl)
+      && subobject_count != 0u) {
     reshade::api::pipeline_subobject* subobjects_clone = renodx::utils::pipeline::ClonePipelineSubObjects(subobjects, subobject_count);
 
     // Store clone of subobjects
@@ -1086,6 +1146,10 @@ static void Use(DWORD fdw_reason) {
         renodx::utils::pipeline::RegisterOnBindInfoCallback(OnBindPipelineForReplacement);
       }
       renodx::utils::pipeline::RegisterOnDestroyCallback(OnDestroyPipeline);
+      internal::shared.RegisterEvent<reshade::addon_event::draw>(OnOpenGLDraw);
+      internal::shared.RegisterEvent<reshade::addon_event::draw_indexed>(OnOpenGLDrawIndexed);
+      internal::shared.RegisterEvent<reshade::addon_event::dispatch>(OnOpenGLDispatch);
+      internal::shared.RegisterEvent<reshade::addon_event::draw_or_dispatch_indirect>(OnOpenGLIndirect);
 
       if (attached) return;
       attached = true;
@@ -1099,6 +1163,10 @@ static void Use(DWORD fdw_reason) {
       renodx::utils::pipeline::UnregisterOnInitCallback(OnInitPipeline);
       renodx::utils::pipeline::UnregisterOnBindInfoCallback(OnBindPipelineForReplacement);
       renodx::utils::pipeline::UnregisterOnDestroyCallback(OnDestroyPipeline);
+      internal::shared.UnregisterEvent<reshade::addon_event::draw>(OnOpenGLDraw);
+      internal::shared.UnregisterEvent<reshade::addon_event::draw_indexed>(OnOpenGLDrawIndexed);
+      internal::shared.UnregisterEvent<reshade::addon_event::dispatch>(OnOpenGLDispatch);
+      internal::shared.UnregisterEvent<reshade::addon_event::draw_or_dispatch_indirect>(OnOpenGLIndirect);
       internal::shared.UnregisterModule();
       renodx::utils::state::Use(fdw_reason);
       renodx::utils::pipeline_layout::Use(fdw_reason);

@@ -334,6 +334,19 @@ static reshade::api::pipeline_subobject* ClonePipelineSubObjects(const reshade::
         }
 #endif
 
+        if (old_desc->spec_constants != 0u) {
+          auto bytes = sizeof(uint32_t) * old_desc->spec_constants;
+          auto* ids = static_cast<uint32_t*>(malloc(bytes));
+          auto* values = static_cast<uint32_t*>(malloc(bytes));
+          memcpy(ids, old_desc->spec_constant_ids, bytes);
+          memcpy(values, old_desc->spec_constant_values, bytes);
+          new_desc->spec_constant_ids = ids;
+          new_desc->spec_constant_values = values;
+        } else {
+          new_desc->spec_constant_ids = nullptr;
+          new_desc->spec_constant_values = nullptr;
+        }
+
         if (old_desc->code_size != 0u) {
           void* code_copy = malloc(old_desc->code_size);
           memcpy(code_copy, old_desc->code, old_desc->code_size);
@@ -442,6 +455,11 @@ static void DestroyPipelineSubobjects(std::span<reshade::api::pipeline_subobject
           std::free(const_cast<char*>(desc->entry_point));
           desc->entry_point = nullptr;
         }
+        free(const_cast<uint32_t*>(desc->spec_constant_ids));
+        free(const_cast<uint32_t*>(desc->spec_constant_values));
+        desc->spec_constant_ids = nullptr;
+        desc->spec_constant_values = nullptr;
+        desc->spec_constants = 0;
         free(const_cast<void*>(desc->code));
         desc->code = nullptr;
         break;

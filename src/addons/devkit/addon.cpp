@@ -59,6 +59,7 @@
 #include "../../utils/resource_replace.hpp"
 #include "../../utils/resource_upgrade.hpp"
 #include "../../utils/shader.hpp"
+#include "../../utils/shader_format.hpp"
 #include "../../utils/shader_compiler_directx.hpp"
 #include "../../utils/shader_compiler_vulkan.hpp"
 #include "../../utils/shader_compiler_watcher.hpp"
@@ -165,7 +166,9 @@ struct ShaderDetails {
   ShaderTextResult disassembly = std::nullopt;
   ShaderTextResult decompilation = std::nullopt;
   std::optional<renodx::utils::shader::compiler::directx::DxilProgramVersion> program_version = std::nullopt;
-  std::span<const uint8_t> addon_shader;
+  std::vector<uint8_t> addon_shader;
+  ShaderTextResult addon_disassembly = std::nullopt;
+  ShaderTextResult disk_disassembly = std::nullopt;
   std::optional<renodx::utils::shader::compiler::watcher::CustomShader> disk_shader = std::nullopt;
   reshade::api::pipeline_stage shader_type = static_cast<reshade::api::pipeline_stage>(0);
   std::optional<std::vector<ResourceBind>> resource_binds = std::nullopt;
@@ -465,7 +468,10 @@ void EnsureShaderDataForShaderDetails(reshade::api::device* device, ShaderDetail
       return renodx::utils::shader::compiler::directx::DisassembleShader(shader_data);
     }
     if (device->get_api() == reshade::api::device_api::opengl) {
-      return std::string(shader_data.data(), shader_data.data() + shader_data.size());
+      if (renodx::utils::shader::format::IsSpirv(shader_data)) {
+        return renodx::utils::shader::compiler::vulkan::DisassembleSpirv(shader_data);
+      }
+      return renodx::utils::shader::format::SourceText(shader_data);
     }
     if (device->get_api() == reshade::api::device_api::vulkan) {
       return renodx::utils::shader::compiler::vulkan::DisassembleSpirv(shader_data);
@@ -595,9 +601,14 @@ void RunCmdDecompiler(const std::filesystem::path& cmd_decompiler_path,
       return sections;
     }
     if (device->get_api() == reshade::api::device_api::opengl) {
-      auto source = std::string(shader_data.data(), shader_data.data() + shader_data.size());
-      sections.disassembly = source;
-      sections.decompilation = source;
+      if (renodx::utils::shader::format::IsSpirv(shader_data)) {
+        sections.disassembly = renodx::utils::shader::compiler::vulkan::DisassembleSpirv(shader_data);
+        sections.decompilation = renodx::utils::shader::compiler::vulkan::DecompileSpirvToGlsl(shader_data, false);
+      } else {
+        auto source = renodx::utils::shader::format::SourceText(shader_data);
+        sections.disassembly = source;
+        sections.decompilation = source;
+      }
       return sections;
     }
     if (device->get_api() == reshade::api::device_api::vulkan) {
@@ -3044,7 +3055,7 @@ struct LoadedDiskShaderResult {
   bool activated = false;
 };
 
-std::vector<LoadedDiskShaderResult> LoadDiskShaders(reshade::api::device* device, DeviceData* data, bool activate);
+std::vector<LoadedDiskShaderResult> LoadDiskShaders(reshade::api::device* device, DeviceData* data, bool activate, bool preserve_selection = false);
 
 [[nodiscard]] ToolResult BuildLoadLiveShadersResult(
     uint32_t device_index,
@@ -4210,6 +4221,9 @@ void OnInitDevice(reshade::api::device* device) {
   }
 
   const auto device_api = device->get_api();
+#ifdef RENODX_DEVKIT_OPENGL_ONLY
+  if (device_api != reshade::api::device_api::opengl) return;
+#endif
   if (devkit_primary_device_api.load(std::memory_order_acquire)
           == static_cast<uint32_t>(reshade::api::device_api::d3d9)
       && device_api != reshade::api::device_api::d3d9) {
@@ -4493,7 +4507,8 @@ void OnInitPipelineTrackAddons(
   renodx::utils::shader::ForEachRuntimeReplacement(device, [&](uint32_t shader_hash, std::span<const uint8_t> bytecode) {
         found_replacement = true;
         auto* shader_details = data->GetShaderDetails(shader_hash);
-        shader_details->addon_shader = bytecode;
+        shader_details->addon_shader.assign(bytecode.begin(), bytecode.end());
+        shader_details->addon_disassembly = std::nullopt;
         if (shader_details->shader_source != ShaderDetails::ShaderSource::DISK_SHADER) {
           shader_details->shader_source = ShaderDetails::ShaderSource::ADDON_SHADER;
         }
@@ -4516,6 +4531,23 @@ void OnInitPipeline(
   if (data == nullptr) return;
   const std::unique_lock lock(data->mutex);
   data->live_pipelines.emplace(pipeline.handle);
+
+  // OpenGL publishes shader sources at program link time. Retain them now so
+  // linked shaders are inspectable even before their first captured draw.
+  if (device->get_api() == reshade::api::device_api::opengl) {
+    renodx::utils::shader::GetPipelineShaderDetails(pipeline, [&](const auto& details) {
+      if (details.is_replacement) return;
+      for (const auto& info : details.subobject_shaders) {
+        auto* shader = data->GetShaderDetails(info.shader_hash);
+        shader->shader_type = info.stage;
+        if (shader->shader_data.empty() && info.subobject_index < details.subobjects.size()) {
+          if (auto bytes = renodx::utils::shader::GetShaderData(details, info); bytes.has_value()) {
+            shader->shader_data = std::move(*bytes);
+          }
+        }
+      }
+    });
+  }
 
   for (const auto& subobject : std::span<const reshade::api::pipeline_subobject>(subobjects, subobject_count)) {
     if (subobject.type == reshade::api::pipeline_subobject_type::blend_state) {
@@ -5382,7 +5414,7 @@ void ActivateShader(reshade::api::device* device, uint32_t shader_hash, std::spa
   renodx::utils::shader::AddRuntimeReplacement(device, shader_hash, shader_data);
 }
 
-std::vector<LoadedDiskShaderResult> LoadDiskShaders(reshade::api::device* device, DeviceData* data, bool activate) {
+std::vector<LoadedDiskShaderResult> LoadDiskShaders(reshade::api::device* device, DeviceData* data, bool activate, bool preserve_selection) {
   std::vector<LoadedDiskShaderResult> results = {};
   std::unordered_map<uint32_t, renodx::utils::shader::compiler::watcher::CustomShader> custom_shaders;
   renodx::utils::shader::compiler::watcher::SetDeviceApi(device->get_api());
@@ -5398,7 +5430,9 @@ std::vector<LoadedDiskShaderResult> LoadDiskShaders(reshade::api::device* device
   for (const auto& [shader_hash, custom_shader] : custom_shaders) {
     reshade::log::message(reshade::log::level::debug, "new shaders");
     auto* details = data->GetShaderDetails(shader_hash);
+    const bool had_disk_shader = details->disk_shader.has_value();
     details->disk_shader = custom_shader;
+    details->disk_disassembly = std::nullopt;
 
     auto result = LoadedDiskShaderResult{
         .shader_hash = shader_hash,
@@ -5408,11 +5442,13 @@ std::vector<LoadedDiskShaderResult> LoadDiskShaders(reshade::api::device* device
         .activated = false,
     };
 
-    if (activate) {
-      details->shader_source = ShaderDetails::ShaderSource::DISK_SHADER;
+    if (activate && (!preserve_selection || !had_disk_shader
+                     || details->shader_source == ShaderDetails::ShaderSource::DISK_SHADER)) {
+      details->shader_source = ShaderDetails::ShaderSource::ORIGINAL_SHADER;
       DeactivateShader(device, shader_hash);
 
       if (!custom_shader.removed && custom_shader.IsCompilationOK()) {
+        details->shader_source = ShaderDetails::ShaderSource::DISK_SHADER;
         const auto& shader_data = details->disk_shader->GetCompilationData();
         ActivateShader(device, shader_hash, shader_data);
         result.activated = true;
@@ -8313,7 +8349,7 @@ void RenderShaderViewDisassembly(reshade::api::device* device, DeviceData* data,
   ImGui::InputTextMultiline(
       "##disassemblyCode",
       const_cast<char*>(disassembly_string.c_str()),
-      disassembly_string.length(),
+      disassembly_string.length() + 1,
       ImVec2(-4, -4),
       ImGuiInputTextFlags_ReadOnly);
   if (!ok) {
@@ -8327,6 +8363,7 @@ void RenderShaderViewLive(reshade::api::device* device, DeviceData* data, Shader
   if (shader_details->disk_shader.has_value()) {
     if (!shader_details->disk_shader->IsCompilationOK()) {
       live_string = shader_details->disk_shader->GetCompilationException().what();
+      failed = true;
     } else if (shader_details->disk_shader->is_hlsl
                || shader_details->disk_shader->is_glsl
                || shader_details->disk_shader->is_slang) {
@@ -8336,6 +8373,14 @@ void RenderShaderViewLive(reshade::api::device* device, DeviceData* data, Shader
         live_string = e.what();
         failed = true;
       }
+    } else {
+      if (std::holds_alternative<std::nullopt_t>(shader_details->disk_disassembly)) {
+        auto bytes = shader_details->disk_shader->GetCompilationData();
+        shader_details->disk_disassembly = BuildDisassemblyForShaderData(device, bytes);
+      }
+      const auto& text = shader_details->disk_disassembly;
+      failed = std::holds_alternative<std::exception>(text);
+      live_string = failed ? std::get<std::exception>(text).what() : std::get<std::string>(text);
     }
   }
   if (failed) {
@@ -8350,6 +8395,22 @@ void RenderShaderViewLive(reshade::api::device* device, DeviceData* data, Shader
   if (failed) {
     ImGui::PopStyleColor();
   }
+}
+
+void RenderShaderViewAddon(reshade::api::device* device, ShaderDetails* shader_details) {
+  if (shader_details->addon_shader.empty()) {
+    ImGui::TextDisabled("No addon replacement was registered for this shader.");
+    return;
+  }
+  if (std::holds_alternative<std::nullopt_t>(shader_details->addon_disassembly)) {
+    shader_details->addon_disassembly = BuildDisassemblyForShaderData(device, shader_details->addon_shader);
+  }
+  const bool failed = std::holds_alternative<std::exception>(shader_details->addon_disassembly);
+  std::string text = failed ? std::get<std::exception>(shader_details->addon_disassembly).what()
+                            : std::get<std::string>(shader_details->addon_disassembly);
+  if (failed) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(192, 0, 0, 255));
+  ImGui::InputTextMultiline("##addonCode", text.data(), text.size() + 1, ImVec2(-4, -4), ImGuiInputTextFlags_ReadOnly);
+  if (failed) ImGui::PopStyleColor();
 }
 
 void RenderShaderViewDecompilation(reshade::api::device* device, DeviceData* data, ShaderDetails* shader_details) {
@@ -8407,6 +8468,29 @@ void RenderShaderView(reshade::api::device* device, DeviceData* data, SettingSel
             ImVec2(0, 0))) {
       auto* shader_details = data->GetShaderDetails(selection.shader_hash);
 
+      if (device->get_api() == reshade::api::device_api::opengl) {
+        ImGui::Text("Original format: %s", renodx::utils::shader::format::OpenGLName(shader_details->shader_data));
+        if (renodx::utils::shader::format::IsArbAssembly(shader_details->shader_data)) {
+          ImGui::TextWrapped("Legacy ARB assembly: inspection only with the stock ReShade replacement backend.");
+        }
+        if (shader_details->shader_source != ShaderDetails::ShaderSource::ORIGINAL_SHADER) {
+          size_t ready = 0, pending = 0, rejected = 0;
+          renodx::utils::shader::shared.data->shader_pipeline_handles.if_contains(
+              {device, shader_details->shader_hash}, [&](const auto& pair) {
+                for (auto handle : pair.second) {
+                  renodx::utils::shader::GetPipelineShaderDetails({handle}, [&](const auto& pipeline) {
+                    if (pipeline.destroyed) return;
+                    if (pipeline.replacement_pipeline.handle != 0) ++ready;
+                    else if (!pipeline.initialized_replacement) ++pending;
+                    else ++rejected;
+                  });
+                }
+              });
+          ImGui::Text("Replacement programs: %zu linked, %zu pending, %zu unavailable", ready, pending, rejected);
+          if (rejected != 0) ImGui::TextWrapped("Check ReShade.log for compilation/link errors. Selecting File does not prove the driver accepted it.");
+        }
+      }
+
       switch (selection.shader_view) {
         case 0:
           RenderShaderViewDisassembly(device, data, shader_details);
@@ -8416,6 +8500,10 @@ void RenderShaderView(reshade::api::device* device, DeviceData* data, SettingSel
           break;
         case 2:
           RenderShaderViewDecompilation(device, data, shader_details);
+          break;
+        case 3:
+          RenderShaderViewAddon(device, shader_details);
+          break;
         default:
           break;
       }
@@ -9096,6 +9184,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
           ImGui::RadioButton("Disassembly", &selection->get().shader_view, 0);
           ImGui::RadioButton("Live Shader", &selection->get().shader_view, 1);
           ImGui::RadioButton("Decompilation", &selection->get().shader_view, 2);
+          ImGui::RadioButton("Add-on code", &selection->get().shader_view, 3);
         } else if (selection->get().resource_handle != 0u) {
           ImGui::RadioButton("History", &selection->get().resource_view, 0);
           ImGui::RadioButton("Preview", &selection->get().resource_view, 1);
@@ -9238,7 +9327,7 @@ void OnPresent(
     auto* device_data = get_data();
     if (device_data == nullptr) return;
     std::unique_lock lock(device_data->mutex);
-    LoadDiskShaders(device, device_data, true);
+    LoadDiskShaders(device, device_data, true, true);
   } else {
     if (renodx::utils::shader::compiler::watcher::IsEnabled()) {
       renodx::utils::shader::compiler::watcher::Stop();
@@ -9319,7 +9408,11 @@ bool initialized = false;
 
 }  // namespace
 
+#ifdef RENODX_DEVKIT_OPENGL_ONLY
+extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX OpenGL DevKit (experimental)";
+#else
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX DevKit";
+#endif
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX DevKit Module";
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
@@ -9403,6 +9496,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       reshade::unregister_event<reshade::addon_event::init_command_list>(OnInitCommandList);
       reshade::unregister_event<reshade::addon_event::destroy_command_list>(OnDestroyCommandList);
       reshade::unregister_event<reshade::addon_event::reset_command_list>(OnResetCommandList);
+      reshade::unregister_event<reshade::addon_event::init_pipeline>(OnInitPipelineTrackAddons);
       reshade::unregister_event<reshade::addon_event::init_pipeline>(OnInitPipeline);
       reshade::unregister_event<reshade::addon_event::bind_pipeline>(OnBindPipeline);
       reshade::unregister_event<reshade::addon_event::destroy_pipeline>(OnDestroyPipeline);

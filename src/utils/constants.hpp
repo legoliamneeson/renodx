@@ -307,7 +307,19 @@ inline void PushShaderInjections(
     shader_stage = reshade::api::shader_stage::all_graphics;
   }
 
-  // const std::shared_lock lock(renodx::utils::mutex::global_mutex);
+  // std140 rounds the block extent to a vec4. Do not read beyond the C++ object.
+  std::vector<float> padded_injection;
+  if (device_api == reshade::api::device_api::opengl) {
+    if (offset != 0u) {
+      reshade::log::message(reshade::log::level::error, "OpenGL injection requires a zero offset.");
+      return;
+    }
+    if (shader_injection.size() % 4u != 0u) {
+      padded_injection.assign(shader_injection.begin(), shader_injection.end());
+      padded_injection.resize((shader_injection.size() + 3u) & ~size_t(3u), 0.f);
+      shader_injection = padded_injection;
+    }
+  }
   cmd_list->push_constants(
       shader_stage,
       layout,

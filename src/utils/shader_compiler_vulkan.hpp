@@ -326,10 +326,10 @@ inline std::filesystem::path GetToolsPath() {
   return internal::tools_path;
 }
 
-inline void AppendSpirvCrossFlags(std::vector<std::wstring>& args) {
+inline void AppendSpirvCrossFlags(std::vector<std::wstring>& args, bool vulkan_semantics = true) {
   args.emplace_back(L"--version");
   args.emplace_back(L"450");
-  args.emplace_back(L"--vulkan-semantics");
+  if (vulkan_semantics) args.emplace_back(L"--vulkan-semantics");
   args.emplace_back(L"--no-es");
 }
 
@@ -373,7 +373,7 @@ inline std::string DisassembleSpirv(std::span<const uint8_t> data) {
   return disassembly;
 }
 
-inline std::string DecompileSpirvToGlsl(std::span<const uint8_t> data) {
+inline std::string DecompileSpirvToGlsl(std::span<const uint8_t> data, bool vulkan_semantics = true) {
   auto spirv_cross = internal::FindSpirvCrossPath();
   if (!spirv_cross.has_value()) {
     throw std::exception("spirv-cross.exe not found.");
@@ -387,7 +387,7 @@ inline std::string DecompileSpirvToGlsl(std::span<const uint8_t> data) {
 
   std::vector<std::wstring> args;
   args.emplace_back(spv_path.wstring());
-  AppendSpirvCrossFlags(args);
+  AppendSpirvCrossFlags(args, vulkan_semantics);
 
   const std::wstring command_line = internal::QuoteArg(spirv_cross->wstring()) + L" " + internal::JoinArgs(args);
   auto result = internal::RunProcess(command_line, output_dir);

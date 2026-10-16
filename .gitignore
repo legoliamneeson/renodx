@@ -56,3 +56,5 @@ __pycache__/
 .test/
 .venv-analysis/
 tmp/*
+# RenoOGL staged builds (scripts/build-opengl.ps1)
+dist/

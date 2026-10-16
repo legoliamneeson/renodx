@@ -15,6 +15,10 @@ RenoDX, short for "Renovation Engine for DirectX Games", is a toolset to mod gam
 
 * See [Mods page](https://github.com/clshortfuse/renodx/wiki/Mods)
 
+# RenoOGL (OpenGL)
+
+This `renoogl` branch adds an experimental OpenGL DevKit (`devkit_opengl`), a Generic OpenGL addon (`generic_opengl`) and an OpenGL backend patch for ReShade. Clone it with `git clone --recurse-submodules -b renoogl https://github.com/legoliamneeson/renodx.git` and see [README_OPENGL.md](./README_OPENGL.md) for building the patched ReShade.
+
 # Utilities
 
 * [renodx-fpslimiter.addon64](https://clshortfuse.github.io/renodx/renodx-fpslimiter.addon64) &ndash; FPS Limiter

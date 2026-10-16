@@ -16,6 +16,7 @@
 #include <shared_mutex>
 #include <sstream>
 #include <string>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
@@ -23,6 +24,7 @@
 #include <variant>
 #include <vector>
 #include "./format.hpp"
+#include "./shader_format.hpp"
 #include "./hlsl_dependencies.hpp"
 #include "./path.hpp"
 #include "./shader_compiler_directx.hpp"
@@ -365,6 +367,16 @@ static bool CompileCustomShaders() {
       const bool is_spv = entry_path.extension().compare(".spv") == 0;
       const bool is_slang = entry_path.extension().compare(".slang") == 0;
       if (!is_hlsl && !is_cso && !is_spv && !is_glsl && !is_slang) continue;
+      // Do not feed DirectX bytecode to OpenGL or consume a tagged module for
+      // another backend when live folders contain more than one variant.
+      if ((is_hlsl || is_cso) && local_device_api == reshade::api::device_api::opengl) continue;
+      if (is_spv) {
+        if (local_device_api != reshade::api::device_api::opengl
+            && local_device_api != reshade::api::device_api::vulkan) continue;
+        const auto name = entry_path.filename().string();
+        if (name.ends_with(".gl.spv") && local_device_api != reshade::api::device_api::opengl) continue;
+        if (name.ends_with(".vk.spv") && local_device_api != reshade::api::device_api::vulkan) continue;
+      }
 
       auto basename = entry_path.stem().string();
       std::string hash_string;
@@ -533,7 +545,14 @@ static bool CompileCustomShaders() {
         } else if (is_slang) {
           throw std::exception("Slang source shaders require Vulkan API.");
         } else {
-          custom_shader.compilation = utils::path::ReadBinaryFile(entry_path);
+          auto bytes = utils::path::ReadBinaryFile(entry_path);
+          if (is_spv && !renodx::utils::shader::format::HasSpirvHeader(bytes)) {
+            throw std::runtime_error("Invalid SPIR-V header or truncated word data.");
+          }
+          if (is_glsl && (bytes.empty() || renodx::utils::shader::format::IsSpirv(bytes))) {
+            throw std::runtime_error("Expected GLSL source text; use .spv for SPIR-V binaries.");
+          }
+          custom_shader.compilation = std::move(bytes);
         }
       } catch (std::exception& exception) {
         custom_shader.compilation = exception;

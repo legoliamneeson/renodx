@@ -25,6 +25,7 @@
 #include "./format.hpp"
 #include "./path.hpp"
 #include "./shader.hpp"
+#include "./shader_format.hpp"
 #include "./shader_compiler_directx.hpp"
 
 namespace renodx::utils::shader::dump {
@@ -81,7 +82,8 @@ static void CheckShadersOnDisk(const reshade::api::device_api device_api = resha
   for (const auto& entry : std::filesystem::directory_iterator(dump_path)) {
     if (!entry.is_regular_file()) continue;
     const auto& entry_path = entry.path();
-    if (entry_path.extension() != extension) continue;
+    if (entry_path.extension() != extension
+        && !(device_api == reshade::api::device_api::opengl && entry_path.extension() == ".spv")) continue;
     const auto& basename = entry_path.stem().string();
     if (basename.length() < 2 + 8) continue;
     if (!basename.starts_with("0x")) continue;
@@ -342,7 +344,7 @@ static std::filesystem::path GetShaderDumpPath(
       break;
     }
     case reshade::api::device_api::opengl:
-      extension = ".glsl";
+      extension = format::IsSpirv(shader_data) ? ".spv" : ".glsl";
       switch (shader_type) {
         case reshade::api::pipeline_subobject_type::pixel_shader:
           dump_path += L".frag";
@@ -388,13 +390,13 @@ static bool DumpShader(
     const std::string& prefix = "",
     const reshade::api::device_api& device_api = reshade::api::device_api::d3d11) {
   auto dump_path = GetShaderDumpPath(shader_hash, shader_data, shader_type, prefix, device_api);
-  auto is_binary = device_api != reshade::api::device_api::opengl;
+  auto is_binary = device_api != reshade::api::device_api::opengl || format::IsSpirv(shader_data);
 
   if (is_binary) {
     renodx::utils::path::WriteBinaryFile(dump_path, shader_data);
   } else {
     // trim null
-    renodx::utils::path::WriteBinaryFile(dump_path, shader_data.subspan(0, shader_data.size() - 1));
+    renodx::utils::path::WriteBinaryFile(dump_path, shader_data.first(format::TextBytes(shader_data).size()));
   }
   return true;
 }

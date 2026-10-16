@@ -1703,7 +1703,7 @@ static void OnInitPipelineLayout(
         reshade::log::message(reshade::log::level::warning, s.str().c_str());
         cbv_index = data->expected_constant_buffer_index;
       }
-      if (cbv_index == 14) {
+      if (device_api != reshade::api::device_api::opengl && cbv_index == 14) {
         cbv_index = 13;
         std::stringstream s;
         s << "mods::shader::OnInitPipelineLayout(";
@@ -1715,10 +1715,12 @@ static void OnInitPipelineLayout(
       }
 
       // device->create_pipeline_layout(1)
-      reshade::api::pipeline_layout_param new_params;
+      reshade::api::pipeline_layout_param new_params = {};
       new_params.type = reshade::api::pipeline_layout_param_type::push_constants;
-      // newParams.push_constants.binding = 0;
-      new_params.push_constants.count = 1;
+      // OpenGL's backend uses binding, not dx_register_index, for its UBO.
+      // Source GLSL and SPIR-V both read this same indexed buffer binding.
+      new_params.push_constants.binding = device_api == reshade::api::device_api::opengl ? cbv_index : 0u;
+      new_params.push_constants.count = device_api == reshade::api::device_api::opengl ? ((shader_injection_size + 3u) & ~3u) : 1u;
       new_params.push_constants.dx_register_index = cbv_index;
       new_params.push_constants.dx_register_space = 0;
       new_params.push_constants.visibility = reshade::api::shader_stage::all;
@@ -1726,12 +1728,13 @@ static void OnInitPipelineLayout(
       auto result = device->create_pipeline_layout(1, &new_params, &injection_layout);
       std::stringstream s;
       s << "mods::shader::OnInitPipelineLayout(";
-      s << "Creating D3D11 Layout ";
+      s << (device_api == reshade::api::device_api::opengl ? "Creating OpenGL UBO Layout " : "Creating D3D11 Layout ");
       s << PRINT_PTR(injection_layout.handle);
       s << ": " << result;
       s << " )";
       reshade::log::message(reshade::log::level::info, s.str().c_str());
 
+      if (!result) return;
       injection_index = 0;
     }
   }
