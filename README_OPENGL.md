@@ -89,7 +89,7 @@ Output: `build32\Release\renodx-devkit_opengl.addon32`.
 
 ### 32-bit Doom 3 addon
 
-With your Doom 3 mod installed under `src\games\doom3`, configure and build:
+The Doom 3 addon lives in `src\games\doom3`. Configure and build:
 
 ```powershell
 cmake --preset clang-x86
@@ -97,8 +97,7 @@ cmake --build --preset clang-x86-release --target doom3
 ```
 
 Output: `build32\Release\renodx-doom3.addon32`.
-The uploaded base repository did not contain `src\games\doom3`; the command
-requires your separate Doom 3 addon sources to be present. The OpenGL DevKit
+The OpenGL DevKit
 and the Doom 3 game addon are separate targets, so build both when using both.
 For subsequent Doom 3 rebuilds, use just:
 
@@ -186,7 +185,7 @@ loaded together so they use the same shared allocator implementation.
 
 | Input | Example filename | Behavior |
 | --- | --- | --- |
-| Driver GLSL source | `0xHASH.frag.glsl` | Driver compiles text; no automatic include preprocessing |
+| Driver GLSL source | `0xHASH.frag.glsl` | Driver compiles text. `#include "name.glsl"` is expanded at configure time, looking in the file's folder and then `src/shaders/glsl/`. Output is still plain GLSL, not SPIR-V |
 | OpenGL-targeted SPIR-V | `0xHASH.frag.gl.spv` | Driver specializes the binary |
 | Offline GLSL to OpenGL SPIR-V | `0xHASH.frag.gl.glsl` | Existing glslang workflow uses OpenGL semantics |
 

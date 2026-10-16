@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.27)
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/tool-versions.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/glsl-includes.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -483,7 +484,10 @@ function(build_shader_target ADDON ADDON_PATH)
           ${GLSLANG_BIN} -G -S ${SHADER_STAGE} -o ${EMBED_FOLDER}/${GLSL_OUTPUT_STEM}.spv ${FILE})
         add_stage_spirv_shader(${GLSL_OUTPUT_STEM})
       else()
-        configure_file(${FILE} ${EMBED_FOLDER}/${GLSL_OUTPUT_STEM}.glsl COPYONLY)
+        # Driver GLSL is embedded as text. Resolve #include here (see cmake/glsl-includes.cmake).
+        renodx_glsl_expand(GLSL_EXPANDED "${FILE}" "${ADDON_PATH};${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/glsl")
+        file(WRITE ${EMBED_FOLDER}/${GLSL_OUTPUT_STEM}.glsl "${GLSL_EXPANDED}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RENODX_GLSL_INCLUDED_FILES})
         list(APPEND SHADER_BINARIES ${EMBED_FOLDER}/${GLSL_OUTPUT_STEM}.glsl)
       endif()
     endif()
