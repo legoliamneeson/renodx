@@ -17,7 +17,17 @@ RenoDX, short for "Renovation Engine for DirectX Games", is a toolset to mod gam
 
 # RenoOGL (OpenGL)
 
-This `renoogl` branch adds an experimental OpenGL DevKit (`devkit_opengl`), a Generic OpenGL addon (`generic_opengl`) and an OpenGL backend patch for ReShade. Clone it with `git clone --recurse-submodules -b renoogl https://github.com/legoliamneeson/renodx.git` and see [README_OPENGL.md](./README_OPENGL.md) for building the patched ReShade.
+This `renoogl` branch adds OpenGL support: an OpenGL DevKit (`devkit_opengl`), the Doom 3 addon (`doom3`), a Generic OpenGL addon (`generic_opengl`) and a patched ReShade build (`reshade_opengl` → `opengl32.dll`). Everything builds with the normal presets, for example:
+
+```powershell
+git clone --recurse-submodules -b renoogl https://github.com/legoliamneeson/renodx.git renodx-ogl
+cd renodx-ogl
+cmake --preset clang-x86
+cmake --build --preset clang-x86-release --target reshade_opengl
+cmake --build --preset clang-x86-release --target doom3
+```
+
+See [README_OPENGL.md](./README_OPENGL.md) for the required tools, one-time setup, installing into a game and troubleshooting.
 
 # Utilities
 
