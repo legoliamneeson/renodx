@@ -95,7 +95,8 @@ else()
 endif()
 
 set(BUILD_LOG "${OUTPUT_DIR}/reshade-opengl-build.log")
-set(MSBUILD_ARGS "\"${RESHADE_DIR}/ReShade.sln\" /t:ReShade /m /nologo /v:minimal /p:Configuration=Release /p:Platform=${PLATFORM} /p:PlatformToolset=${SELECTED_TOOLSET} \"/flp:logfile=${BUILD_LOG};verbosity=normal\"")
+# ReShade.sln names its platforms "32-bit"/"64-bit"; they build the projects as Win32/x64.
+set(MSBUILD_ARGS "\"${RESHADE_DIR}/ReShade.sln\" /t:ReShade /m /nologo /v:minimal /p:Configuration=Release \"/p:Platform=${BITS}-bit\" /p:PlatformToolset=${SELECTED_TOOLSET} \"/flp:logfile=${BUILD_LOG};verbosity=normal\"")
 set(BUILD_SCRIPT "${OUTPUT_DIR}/reshade-opengl-build.cmd")
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 file(REMOVE "${BUILD_LOG}")
