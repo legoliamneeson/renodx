@@ -8475,17 +8475,20 @@ void RenderShaderView(reshade::api::device* device, DeviceData* data, SettingSel
         }
         if (shader_details->shader_source != ShaderDetails::ShaderSource::ORIGINAL_SHADER) {
           size_t ready = 0, pending = 0, rejected = 0;
-          renodx::utils::shader::shared.data->shader_pipeline_handles.if_contains(
-              {device, shader_details->shader_hash}, [&](const auto& pair) {
-                for (auto handle : pair.second) {
-                  renodx::utils::shader::GetPipelineShaderDetails({handle}, [&](const auto& pipeline) {
-                    if (pipeline.destroyed) return;
-                    if (pipeline.replacement_pipeline.handle != 0) ++ready;
-                    else if (!pipeline.initialized_replacement) ++pending;
-                    else ++rejected;
-                  });
-                }
+          // Handles are borrowed under the map lock; copy them before looking up pipelines.
+          std::vector<uint64_t> pipeline_handles;
+          renodx::utils::shader::GetShaderPipelineHandles(
+              device, shader_details->shader_hash, [&](const auto& handles) {
+                pipeline_handles.assign(handles.begin(), handles.end());
               });
+          for (const auto handle : pipeline_handles) {
+            renodx::utils::shader::GetPipelineShaderDetails({handle}, [&](const auto& pipeline) {
+              if (pipeline.destroyed) return;
+              if (pipeline.replacement_pipeline.handle != 0) ++ready;
+              else if (!pipeline.initialized_replacement) ++pending;
+              else ++rejected;
+            });
+          }
           ImGui::Text("Replacement programs: %zu linked, %zu pending, %zu unavailable", ready, pending, rejected);
           if (rejected != 0) ImGui::TextWrapped("Check ReShade.log for compilation/link errors. Selecting File does not prove the driver accepted it.");
         }
