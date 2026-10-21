@@ -98,7 +98,8 @@ void main(
     // Northern lights texture is already bright and colorful, so just do a mild boost
     r0.xyz = sqrt(r0.xyz) * 1.2f;  // TUNE: was 2.0, try 2.5-3.5
   } 
-  float3 capped = min(r0.xyz, 1.2f);
+  // Preserve the particle intensity above 1.2 in the floating-point scene.
+  float3 capped = r0.xyz;
   // Output
   o0.xyz = capped;
   o0.w = saturate(unboosted.w);  // Clamp alpha output

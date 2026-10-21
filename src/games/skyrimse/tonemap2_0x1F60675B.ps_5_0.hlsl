@@ -233,17 +233,7 @@ void main(
 
     r0.xyz = SafePositive(r0.xyz + bloomLinear * bloomStrength);
 
-    // HDR Boost / inverse tone mapping. Applied only to the custom HDR path,
-    // after eye adaptation and before either HDR tone mapper.
-    r0.xyz = HDRBoost(r0.xyz, CUSTOM_HDR_BOOST);
-
-    if (IsPsychoV24Mode()) {
-      r0.xyz = ApplyPsychoV24HDRTonemap(r0.xyz);
-    } else {
-      r0.xyz = renodx::draw::ToneMapPass(r0.xyz, config);
-    }
-
-    // The vanilla color-grade math below expects gamma-space color.
+    // Grade in gamma space before display tone mapping.
     r0.xyz = renodx::color::gamma::Encode(SafePositive(r0.xyz));
 
     // Color grading
@@ -256,12 +246,33 @@ void main(
     r0.xyzw = cb2[4].wwww * r1.xyzw + r0.xyzw;
     r0.xyzw = cb2[3].wwww * r0.xyzw + -r2.xxxx;
     r0.xyzw = cb2[3].zzzz * r0.xyzw + r2.xxxx;
-    float gradeLuma = renodx::color::y::from::BT709(outputColor);
-    float gradeStrength = RENODX_COLOR_GRADE_STRENGTH * saturate(1.0 - (gradeLuma - 0.8) / 0.5);
+    // Apply the native grade consistently: luminance-dependent fading can
+    // reverse the highlight response when the grade raises brightness.
+    float gradeStrength = RENODX_COLOR_GRADE_STRENGTH;
     r0.xyz = lerp(outputColor, r0.xyz, gradeStrength);
 
     // Linearize and encode
     r0.xyz = renodx::color::gamma::DecodeSafe(r0.xyz);
+
+    // Optional grading brightness trial: smoothly extend highlights only.
+    // Neutral through reference white; approaches +25% linear luminance.
+    // Shared RGB gain preserves chromaticity; display mapping follows.
+    float gradeY = renodx::color::y::from::BT709(r0.xyz);
+    float gradeExcess = max(gradeY - 1.0f, 0.0f);
+    float gradeExtensionGain = 1.0f + 0.25f *
+        (gradeExcess * gradeExcess) / max(gradeY * gradeY, 1e-8f);
+    r0.xyz *= gradeExtensionGain;
+
+    // HDR Boost / inverse tone mapping. Applied only to the custom HDR path,
+    // after eye adaptation and before either HDR tone mapper.
+    r0.xyz = HDRBoost(r0.xyz, CUSTOM_HDR_BOOST);
+
+    if (IsPsychoV24Mode()) {
+      r0.xyz = ApplyPsychoV24HDRTonemap(r0.xyz);
+    } else {
+      r0.xyz = renodx::draw::ToneMapPass(r0.xyz, config);
+    }
+
     r0.xyz = renodx::color::bt2020::from::BT709(r0.xyz);
     r0.xyz = max(0, r0.xyz);
 

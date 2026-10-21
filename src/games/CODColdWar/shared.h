@@ -9,7 +9,7 @@
 #define COLDWAR_TONE_MAP_TYPE_VANILLA    0.f
 #define COLDWAR_TONE_MAP_TYPE_RENODRT    3.f
 #define COLDWAR_TONE_MAP_TYPE_PSYCHOV30 30.f
-#define COLDWAR_TONE_MAP_TYPE_PRAGMAP   31.f
+#define COLDWAR_TONE_MAP_TYPE_PRISM     31.f
 
 
 // ============================================================================
@@ -18,8 +18,8 @@
 //
 // Existing fields remain in their original order.
 //
-// PsychoV30 and Pragmap controls are appended to the end so existing offsets
-// stay stable.
+// PsychoV30 controls are appended to the end so existing offsets stay stable.
+// PrismTM has no parameters of its own.
 //
 
 struct ShaderInjectData {
@@ -74,22 +74,7 @@ struct ShaderInjectData {
 
   float psychov30_gamut_target;
 
-
-  // --------------------------------------------------------------------------
-  // Pragmap
-  // --------------------------------------------------------------------------
-  //
-  // These are the ONLY two custom parameters exposed by the original
-  // pragmap() function.
-  //
-
-  float pragmap_hue_strength;
-  float pragmap_blowout_strength;
-
-
-  // Keep the structure on a float4 boundary.
-  float _padding0;
-  float _padding1;
+  // 36 floats: already on a float4 boundary.
 };
 
 
@@ -217,17 +202,6 @@ cbuffer shader_injection : register(b13) {
 
 #define RENODX_PSYCHOV30_GAMUT_TARGET \
   shader_injection.psychov30_gamut_target
-
-
-// ============================================================================
-// Pragmap bindings
-// ============================================================================
-
-#define RENODX_PRAGMAP_HUE_STRENGTH \
-  shader_injection.pragmap_hue_strength
-
-#define RENODX_PRAGMAP_BLOWOUT_STRENGTH \
-  shader_injection.pragmap_blowout_strength
 
 
 #define RENODX_RENO_DRT_TONE_MAP_METHOD \

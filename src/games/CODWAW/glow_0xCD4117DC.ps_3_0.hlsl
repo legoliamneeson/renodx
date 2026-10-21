@@ -19,6 +19,13 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0 {
     float3 rays = SafePositive(tex2D(godRaysSampler, uv).rgb);
     float3 glow = bloom * SafePositive(glowApply.w)
                 + rays * SafePositive(glowApply.z);
+    // Bloom is added AFTER scene tone mapping. Roll off its HDR peaks here
+    // so blurred fire cannot overwhelm the detailed, already-mapped flame.
+    // Preserve dim halos and RGB ratios; avoid a flat per-channel clamp.
+    float peak = max(glow.r, max(glow.g, glow.b));
+    float shoulder = max(peak - 0.25f, 0.0f);
+    float mappedPeak = 0.25f + shoulder / (1.0f + shoulder / 0.75f);
+    glow *= (peak > 0.25f) ? mappedPeak / peak : 1.0f;
     glow = SafePositive(glow * SafePositive(bloomControls.y));
     // Preserve original zero alpha. Bloom must not introduce scene opacity.
     // Preserve HDR energy; only guard the representable FP16 range.

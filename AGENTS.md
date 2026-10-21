@@ -47,4 +47,6 @@ For human discoverability, `.agents/skills/README.md` summarizes the skills and 
 - For C++ parameters, use pointers for modifiable/out values and `const&` for non-modified inputs that should not be copied; avoid non-const references except established callback/API signatures.
 - Validate changes with the smallest relevant build target or manual verification path.
 
+## Portable project handoff
 
+For cross-session or cross-AI continuation, start with [AI_HANDOFF.md](AI_HANDOFF.md) and `.agents/skills/renodx-context-handoff/SKILL.md`. The skill index also routes specialized DevKit, HDR, bloom, exposure, injection, DX9, upscaler and OpenGL work; load only the matching procedures.

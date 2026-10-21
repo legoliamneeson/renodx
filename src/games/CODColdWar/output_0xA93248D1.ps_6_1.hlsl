@@ -20,7 +20,8 @@
 //
 // NON-VANILLA:
 //   Measure the LUT black endpoint and remove its luminance floor in linear nits.
-//   Restore highlight brightness with a uniform RGB scale, preserving LUT colour.
+//   Above the live LUT's measured shoulder, continue at its last near-linear
+//   slope with grade colour from below the shoulder (CODWW2MapHDR approach).
 //   Use a continuous shoulder in the last 1% of the display range.
 //   Keep native LUT coordinates, dithering and quantization; bound custom output.
 #include "./shared.h"
@@ -89,9 +90,19 @@ static const float COLDWAR_LUT_OFFSET =
     0.5f / 32.0f;
 
 
-// Keep the existing peak-relative recovery window for compatibility.
-static const float LUT_RECONSTRUCT_START_RATIO = 0.40f;
-static const float LUT_RECONSTRUCT_FULL_RATIO = 0.85f;
+// Live-LUT shoulder extension, ported from CODWW2MapHDR (CODWW2/hdr.hlsli).
+// The native LUT carries the level grade and a baked shoulder for its own
+// ~1000-nit peak (measured 2026-10-20: neutral 1000 -> 709 nits). The shoulder
+// is located per frame by walking octaves from LUT_BASE_NITS until the neutral
+// log-slope drops below LUT_LINEAR_SLOPE or the LUT passes LUT_CEILING_FRACTION
+// of its own maximum. Below it the LUT is used as-is; above it luminance
+// continues at the LUT's last near-linear slope, so each level's grade exposure
+// is kept instead of jumping to the raw input.
+static const float LUT_BASE_NITS = 100.0f;      // LUT as-is below; first walk point
+static const float LUT_LINEAR_SLOPE = 0.9f;     // octave log-slope treated as the shoulder
+static const float LUT_CEILING_FRACTION = 0.5f; // never follow the LUT above half its maximum
+static const float LUT_MAX_SLOPE = 1.5f;        // cap on the continuation slope
+static const float3 BT2020_LUMINANCE = float3(0.2627f, 0.6780f, 0.0593f);
 static const float OUTPUT_SHOULDER_START_RATIO = 0.99f;
 
 // ============================================================================
@@ -219,37 +230,59 @@ float3 PQDecodeNits(float3 pqColor)
 // instead of the shared helper's BT.709 weights. Uniform scaling retains hue.
 float3 CorrectLUTBlackNits(float3 gradedNits, float3 blackNits)
 {
-    const float3 lumaWeights = float3(0.2627f, 0.6780f, 0.0593f);
-    float gradedY = dot(gradedNits, lumaWeights);
-    float blackY = dot(blackNits, lumaWeights);
+    float gradedY = dot(gradedNits, BT2020_LUMINANCE);
+    float blackY = dot(blackNits, BT2020_LUMINANCE);
     if (blackY <= 0.0f) return gradedNits;
     return gradedNits * (max(gradedY - blackY, 0.0f) / max(gradedY, 1e-8f));
 }
 
-// Recover only energy lost to the LUT, using its RGB direction in linear light.
-// Normalize before applying the target peak: no arbitrary gain ceiling that
-// could leave strongly compressed highlights trapped below the display peak.
-float3 ReconstructLUTBrightnessNits(
-    float3 rawNits,
-    float3 gradedNits,
-    float configuredPeakNits)
+// Native LUT response, in absolute nits, at explicit LOD 0.
+float3 SampleLUTNits(float3 nits)
 {
-    float rawPeak = Max3(rawNits);
-    float gradedPeak = Max3(gradedNits);
-    float strength = smoothstep(
-        configuredPeakNits * LUT_RECONSTRUCT_START_RATIO,
-        configuredPeakNits * LUT_RECONSTRUCT_FULL_RATIO,
-        rawPeak);
-    if (strength <= 0.0f || rawPeak <= gradedPeak) return gradedNits;
-    float targetPeak = lerp(gradedPeak, rawPeak, strength);
+    return PQDecodeNits(codeTexture1.SampleLevel(
+        samplerLUT,
+        PQEncode(nits / COLDWAR_GAME_UNIT_NITS) * COLDWAR_LUT_SCALE + COLDWAR_LUT_OFFSET,
+        0).rgb);
+}
 
-    // A black/near-black LUT result has no reliable hue. Fade to the input
-    // direction in this degenerate case instead of multiplying zero by infinity.
-    const float epsilonNits = 1e-4f;
-    float3 rawDirection = rawNits / max(rawPeak, epsilonNits);
-    float3 direction = gradedNits / max(gradedPeak, epsilonNits)
-        + rawDirection * (1.0f - saturate(gradedPeak / epsilonNits));
-    return direction * (targetPeak / max(Max3(direction), 1e-8f));
+float NeutralLUTY(float nits)
+{
+    return max(dot(SampleLUTNits(nits.xxx), BT2020_LUMINANCE), 0.0001f);
+}
+
+// Follow the live LUT up to its measured shoulder, then continue luminance at
+// its last near-linear slope. Grade colour is sampled one octave below the
+// shoulder (never above the source), so no channel reaches the LUT ceiling and
+// colour and luminance stay continuous. Peak handling is left to the caller.
+float3 ExtendLUTNits(float3 rawNits, float3 lutNits)
+{
+    float sourceY = max(dot(rawNits, BT2020_LUMINANCE), 0.0f);
+    if (sourceY <= LUT_BASE_NITS) return lutNits;
+
+    float shoulderX = LUT_BASE_NITS;
+    float shoulderY = NeutralLUTY(shoulderX);
+    float ceilingY = NeutralLUTY(10000.0f) * LUT_CEILING_FRACTION;
+    float slope = 1.0f;
+    [loop]
+    for (int i = 0; i < 6; ++i)  // walk up to 6400 nits
+    {
+        float nextY = NeutralLUTY(shoulderX * 2.0f);
+        float octaveSlope = log2(nextY / shoulderY);
+        if (octaveSlope < LUT_LINEAR_SLOPE || nextY > ceilingY) break;
+        slope = min(octaveSlope, LUT_MAX_SLOPE);
+        shoulderX *= 2.0f;
+        shoulderY = nextY;
+    }
+
+    float toneY = sourceY <= shoulderX
+        ? NeutralLUTY(sourceY)
+        : shoulderY * pow(sourceY / shoulderX, slope);
+
+    float sampleY = min(sourceY, max(shoulderX * 0.5f, LUT_BASE_NITS));
+    float3 sampleNits = sampleY < sourceY
+        ? SampleLUTNits(rawNits * (sampleY / sourceY))
+        : lutNits;
+    return sampleNits * (toneY / NeutralLUTY(sampleY));
 }
 
 // A bounded monotonic curve must start BELOW peak; folding only values above
@@ -424,12 +457,12 @@ float4 main(PSInput input) : SV_Target0
         float3 blackPQ = PQEncode(0.0f.xxx);
         float3 blackNits = PQDecodeNits(codeTexture1.SampleLevel(
             samplerLUT, blackPQ * COLDWAR_LUT_SCALE + COLDWAR_LUT_OFFSET, 0).rgb);
-        float3 gradedNits = CorrectLUTBlackNits(PQDecodeNits(lutColor), blackNits);
-        float3 reconstructedNits = ReconstructLUTBrightnessNits(
+        float3 extendedNits = ExtendLUTNits(
             SafePositive(linearHDR) * COLDWAR_GAME_UNIT_NITS,
-            gradedNits, configuredPeakNits);
+            PQDecodeNits(lutColor));
+        float3 gradedNits = CorrectLUTBlackNits(extendedNits, blackNits);
         float3 outputNits = ApplyUnderPeakProtectionNits(
-            reconstructedNits, configuredPeakNits);
+            gradedNits, configuredPeakNits);
         outputColor = PQEncode(outputNits / COLDWAR_GAME_UNIT_NITS);
         configuredPeakPQ =
             GetRenoDXPeakPQ();

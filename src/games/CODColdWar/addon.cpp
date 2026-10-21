@@ -20,6 +20,7 @@ namespace {
 renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0xCB76A9C1),
     CustomShaderEntry(0xA93248D1),
+    CustomShaderEntry(0xE6F6BF3D),  // UI image quad: HDR-aware black fades
 };
 
 
@@ -46,12 +47,6 @@ bool IsRenoDRT() {
 bool IsPsychoV30() {
   return shader_injection.tone_map_type
       == COLDWAR_TONE_MAP_TYPE_PSYCHOV30;
-}
-
-
-bool IsPragmap() {
-  return shader_injection.tone_map_type
-      == COLDWAR_TONE_MAP_TYPE_PRAGMAP;
 }
 
 
@@ -123,7 +118,7 @@ renodx::utils::settings::Settings settings = {
             "Vanilla",
             "RenoDRT",
             "PsychoV30",
-            "Pragmap",
+            "PrismTM",
         },
 
         // Convert UI index -> actual internal tone mapper ID.
@@ -140,7 +135,7 @@ renodx::utils::settings::Settings settings = {
             return COLDWAR_TONE_MAP_TYPE_PSYCHOV30;
           }
 
-          return COLDWAR_TONE_MAP_TYPE_PRAGMAP;
+          return COLDWAR_TONE_MAP_TYPE_PRISM;
         },
 
         .is_visible = []() {
@@ -748,83 +743,6 @@ renodx::utils::settings::Settings settings = {
 
         .is_enabled = []() {
           return IsPsychoV30();
-        },
-
-        .is_visible = []() {
-          return current_settings_mode >= 1.f;
-        },
-    },
-
-
-    // ========================================================================
-    // Pragmap
-    // ========================================================================
-    //
-    // IMPORTANT:
-    //
-    // The original supplied pragmap() function exposes ONLY:
-    //
-    //   hueStrength
-    //   blowoutStrength
-    //
-    // Therefore these are the only Pragmap-specific parameters exposed here.
-    // pragmap.hlsl itself remains untouched.
-    //
-
-    new renodx::utils::settings::Setting{
-        .key = "PragmapHueStrength",
-        .binding = &shader_injection.pragmap_hue_strength,
-
-        .default_value = 75.f,
-
-        .label = "Hue Strength",
-        .section = "Pragmap",
-
-        .tooltip =
-            "Feeds Pragmap's original hueStrength parameter.",
-
-        .min = 0.f,
-        .max = 100.f,
-
-        .format = "%.0f%%",
-
-        .parse = [](float value) {
-          return value * 0.01f;
-        },
-
-        .is_enabled = []() {
-          return IsPragmap();
-        },
-
-        .is_visible = []() {
-          return current_settings_mode >= 1.f;
-        },
-    },
-
-
-    new renodx::utils::settings::Setting{
-        .key = "PragmapBlowoutStrength",
-        .binding = &shader_injection.pragmap_blowout_strength,
-
-        .default_value = 75.f,
-
-        .label = "Blowout",
-        .section = "Pragmap",
-
-        .tooltip =
-            "Feeds Pragmap's original blowoutStrength parameter.",
-
-        .min = 0.f,
-        .max = 100.f,
-
-        .format = "%.0f%%",
-
-        .parse = [](float value) {
-          return value * 0.01f;
-        },
-
-        .is_enabled = []() {
-          return IsPragmap();
         },
 
         .is_visible = []() {

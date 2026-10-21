@@ -57,11 +57,15 @@ cbuffer SpriteBounds : register(b2)
 //     max(value, 0) -> 0
 float SanitizePositiveFinite(float value)
 {
-    // Explicit NaN removal first.
-    value =
-        (value == value)
-        ? value
-        : 0.0f;
+    // Use the SM5 classification intrinsics here instead of relying only on
+    // value == value.  This pass is specifically protecting exact-black
+    // scope markings from 0 * INF/NaN propagation, so make the non-finite
+    // cases explicit before any multiply can happen.
+    if (isnan(value))
+        return 0.0f;
+
+    if (isinf(value))
+        return value > 0.0f ? 65504.0f : 0.0f;
 
     // Keep the full finite FP16 HDR range.
     return min(
@@ -296,18 +300,56 @@ void main(
 
 
     // ------------------------------------------------------------------------
-    // 8. Original sprite modulation
+    // 8. Exact/near-black scope-line fast path
+    // ------------------------------------------------------------------------
+    //
+    // Some scope textures contain true black reticle/marking pixels.  Those
+    // pixels are supposed to produce black regardless of the HDR scene behind
+    // them.  Do not even evaluate RGB scene * sprite for those pixels:
+    //
+    //     0 * INF = NaN
+    //
+    // is an IEEE operation, and a single bad scene channel can therefore show
+    // up as a colored NaN line in diagnostics.  Short-circuiting the black
+    // mask is both mathematically correct for the original modulation and
+    // keeps this fix completely local to the black markings.
+    const float blackLineThreshold = 0.00001f;
+
+    float spriteRGBPeak =
+        max(
+            spriteColor.r,
+            max(spriteColor.g, spriteColor.b)
+        );
+
+    if (spriteRGBPeak <= blackLineThreshold)
+    {
+        float safeAlpha =
+            SanitizePositiveFinite(
+                sceneColor.a * spriteColor.a
+            );
+
+        outputColor =
+            float4(
+                0.0f,
+                0.0f,
+                0.0f,
+                safeAlpha
+            );
+
+        return;
+    }
+
+
+    // ------------------------------------------------------------------------
+    // 9. Original sprite modulation
     // ------------------------------------------------------------------------
     //
     // Original shader:
     //
     //     output = sceneColor * spriteColor;
     //
-    // Both operands are now guaranteed to be finite positive values, so:
-    //
-    //     INF * 0
-    //
-    // can no longer create a NaN.
+    // Non-black pixels use the untouched original modulation after both
+    // operands have been made finite.
 
     float4 modulatedColor =
         sceneColor
@@ -315,7 +357,7 @@ void main(
 
 
     // ------------------------------------------------------------------------
-    // 9. Final finite guard
+    // 10. Final finite guard
     // ------------------------------------------------------------------------
     //
     // This normally does nothing because both operands were already sanitized.
