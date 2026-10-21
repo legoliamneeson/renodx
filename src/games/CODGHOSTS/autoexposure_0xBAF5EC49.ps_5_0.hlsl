@@ -6,10 +6,10 @@
 // - Converts it into a target exposure using cb2[7].z.
 // - Reads the previously adapted exposure from t0.
 // - Moves the previous exposure toward the target exposure by a limited amount.
-// - The RenoDX slider scales that per-frame movement limit.
+// - HDR Smooth filters changes in stops using the existing exposure history.
 //
 // Slider behavior:
-//   100% = exact original game adaptation speed.
+//   Original mode at 100% = original game adaptation.
 //    35% = calmer / less reactive adaptation.
 //     0% = freeze exposure adaptation.
 
@@ -46,7 +46,10 @@ float ComputeTargetExposure(float averageLuminance)
 
 float ApplyAdaptationStep(float previousExposure, float targetExposure)
 {
-  float adaptationSpeed = saturate(RENODX_GHOSTS_AUTO_EXPOSURE_ADAPTATION_SPEED);
+  // Vanilla and an unbound injection buffer use the original adaptation.
+  bool customExposure = RENODX_PEAK_WHITE_NITS > 0.0f && RENODX_TONE_MAP_TYPE != 0.0f;
+  float adaptationSpeed = customExposure
+      ? saturate(RENODX_GHOSTS_AUTO_EXPOSURE_ADAPTATION_SPEED) : 1.0f;
 
   // Original game limits for how much exposure can change this frame.
   float maxIncreasePerFrame = cb2[8].y * cb2[8].z;
@@ -57,6 +60,22 @@ float ApplyAdaptationStep(float previousExposure, float targetExposure)
   maxDecreasePerFrame *= adaptationSpeed;
 
   float exposureDelta = targetExposure - previousExposure;
+
+  if (customExposure && shader_injection.auto_exposure_smoothing > 0.5f
+      && previousExposure > 0.0f && targetExposure > 0.0f
+      && isfinite(previousExposure) && isfinite(targetExposure))
+  {
+    // Normalize the game's directional movement budget to the current
+    // exposure. Reuse its timing factor rather than assume cb2[8].z is seconds.
+    // Unlike the original limiter, this attenuates even sub-budget changes.
+    float movementBudget = max(0.0f, exposureDelta > 0.0f
+        ? maxIncreasePerFrame : maxDecreasePerFrame);
+    float alpha = 1.0f - exp2(-4.0f * movementBudget / max(previousExposure, 1.0e-6f));
+    float previousStops = log2(previousExposure);
+    float targetStops = log2(targetExposure);
+    exposureDelta = exp2(lerp(previousStops, targetStops, alpha)) - previousExposure;
+    if (adaptationSpeed == 0.0f) exposureDelta = 0.0f;
+  }
 
   if (exposureDelta > 0.0f)
   {

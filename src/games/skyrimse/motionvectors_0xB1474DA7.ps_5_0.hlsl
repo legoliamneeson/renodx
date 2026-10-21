@@ -54,35 +54,18 @@ void main(
   }
   r1.xy = t1.Sample(s1_s, v1.xy).xy;
 
-  // Clamp accumulator to finite range before NaN/Inf check.
-  // This prevents depth-filter swings on high-contrast particle edges
-  // from producing Inf, which would flip between dilated and raw velocity
-  // frame-to-frame and cause flicker on boosted fire.
-  r0.yzw = clamp(r0.yzw, -1e6f, 1e6f);
-
-  // NaN check — now only catches actual NaN, not Inf from big swings
-  r2.xyz = cmp(r0.yzw != r0.yzw);
+  // Preserve native adaptation stepping. A 0.00002 cap rounds away in
+  // the RGBA16F history texture at ordinary scene luminance.
+  r2.xyz = cmp((r0.yzw != r0.yzw) | (abs(r0.yzw) > 65504.0f));
   r0.x = (int)r2.y | (int)r2.x;
   r0.x = (int)r2.z | (int)r0.x;
-
-  r0.yz = -r1.xy + r0.yz;  // delta = new - old
-
-  // Slow down adaptation speed to prevent fire from yanking exposure
+  r0.yz = -r1.xy + r0.yz;
   r1.zw = cb2[2].wz * r0.yz;
-
-  // Sign of the delta
   r2.xy = cmp(float2(0, 0) < r1.zw);
   r2.zw = cmp(r1.zw < float2(0, 0));
   r2.xy = (int2)-r2.xy + (int2)r2.zw;
   r2.xy = (int2)r2.xy;
-
-  // Original: 0.00390625 (1/256). We lower the floor so adaptation can be slower.
-  float maxAdaptRate = 0.00001f;  // TUNE: lower = slower adaptation = less flicker
-  r1.zw = max(float2(maxAdaptRate, maxAdaptRate), abs(r1.zw));
-
-  // Also cap the maximum step so a single bright frame can't move exposure far
-  float maxStep = 0.00002f;  // TUNE: lower = more stable, higher = more responsive
-  r1.zw = min(float2(maxStep, maxStep), r1.zw);
+  r1.zw = max(float2(0.00390625, 0.00390625), abs(r1.zw));
 
   r0.yz = min(r1.zw, abs(r0.yz));
   r0.yz = r0.yz * r2.xy + r1.xy;

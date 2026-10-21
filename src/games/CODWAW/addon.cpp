@@ -6822,7 +6822,7 @@ for (const auto old_format : scene_intermediate_formats) {
   for (const float aspect_ratio : scene_intermediate_aspect_ratios) {
     renodx::mods::swapchain::resource_upgrade_infos.push_back({
         .old_format = old_format,
-        .new_format = reshade::api::format::r16g16b16a16_float,
+       .new_format = reshade::api::format::r16g16b16a16_float,
         .ignore_size = false,
         .use_resource_view_cloning = true,
           .use_resource_view_hot_swap = false,

@@ -9,15 +9,17 @@
 //   0  = Vanilla
 //   3  = RenoDRT
 //   30 = PsychoV30
-//   31 = Pragmap
+//   31 = PrismTM
 //
 // Responsibility split:
 //
 //   CB76A9C1:
 //     - reconstructs the original Cold War HDR scene composition
 //     - preserves an exact Vanilla branch
-//     - performs RenoDRT / PsychoV30 / Pragmap display mapping
-//     - prevents configured-peak overshoot in linear HDR
+//     - custom modes (port of CODWW2MapHDR, CODWW2/hdr.hlsli): the live scene
+//       LUT runs FIRST and is followed as-is up to the mapper knee (45% of
+//       Peak Brightness), continued at its local slope above that, then shared
+//       grading, then RenoDRT / PsychoV30 / PrismTM compress only above the knee
 //     - runs RenoDX RenderIntermediatePass for custom tone-map modes
 //
 //   A93248D1:
@@ -25,7 +27,7 @@
 //     - corrects the near-black LUT floor
 //     - releases the native HDR LUT above its old highlight ceiling
 //
-// psychov.hlsl and pragmap.hlsl themselves are not modified.
+// psychov.hlsl is not modified. prismTM.hlsl keeps the supplied prism() as-is.
 
 #include "./shared.h"
 
@@ -33,9 +35,9 @@
 //   src/shaders/tonemap/psychov/psychov.hlsl
 #include "../../shaders/tonemap/psychov/psychov.hlsl"
 
-// Pragmap remains beside the game shader:
-//   src/games/CODCOLDWAR/pragmap.hlsl
-#include "./pragmap.hlsl"
+// PrismTM remains beside the game shader:
+//   src/games/CODColdWar/prismTM.hlsl
+#include "./prismTM.hlsl"
 
 
 // ============================================================================
@@ -110,30 +112,6 @@ static const float COLDWAR_LUT_OFFSET =
 
 
 // ============================================================================
-// Custom-mode highlight rolloff + emergency peak protection
-// ============================================================================
-//
-// The selected RenoDX tone mapper remains responsible for the main HDR mapping.
-//
-// A moderately stronger post-map shoulder starts at 85% of the configured display
-// peak. The older 97% shoulder packed too many bright lights into the final few
-// nits below Peak Brightness.
-//
-// Example at an 800-nit peak:
-//     shoulder begins around 680 nits
-//     a mapped 800-nit highlight becomes about 740 nits
-//     stronger highlights progressively approach 800 nits
-//
-// The emergency guard below is separate and only catches real overshoot.
-//
-static const float HIGHLIGHT_ROLLOFF_START_RATIO =
-    0.85f;
-
-static const float PEAK_OVERSHOOT_TOLERANCE =
-    1.002f;
-
-
-// ============================================================================
 // Safety
 // ============================================================================
 
@@ -168,11 +146,11 @@ bool IsPsychoV30Mode()
 }
 
 
-bool IsPragmapMode()
+bool IsPrismMode()
 {
     return abs(
         RENODX_TONE_MAP_TYPE
-        - COLDWAR_TONE_MAP_TYPE_PRAGMAP)
+        - COLDWAR_TONE_MAP_TYPE_PRISM)
         < 0.5f;
 }
 
@@ -380,489 +358,193 @@ float3 BuildNativeLinearHDR(
 
 
 // ============================================================================
-// Reference-white-relative display peak
+// Custom modes: live scene LUT first, selected mapper only above the knee
 // ============================================================================
 //
-// All custom display mappers are fed the same properly-normalized domain:
+// Port of CODWW2MapHDR / CODWW2MapShoulder (src/games/CODWW2/hdr.hlsli).
 //
-//     1.0 = RENODX_DIFFUSE_WHITE_NITS
+// The scene LUT (t1) is Cold War's vanilla tonemapper: absolute PQ in,
+// linear game units out (1.0 = 100 nits). Measured 2026-10-20 on a neutral
+// ramp it is a continuous filmic curve: octave log-slopes 0.79-0.94 from
+// 100 to 1600 nits, 0.68 and 0.46 above, ~2575 nits at PQ 1.0.
 //
-// Therefore:
+// The previous custom path ran the mapper FIRST and this LUT afterwards, so
+// highlights were tone-mapped twice: a 10,000-nit scene value left this pass
+// at ~1210 nits, 1000 nits at ~544 (LUT alone: 688).
 //
-//     display peak = Peak Brightness / Game Brightness
+// Now the LUT runs first. Because it never becomes near-linear, WWII's
+// 0.9 log-slope shoulder test would stop at the first octave; instead the
+// octave walk follows the LUT until its neutral output would pass the mapper
+// knee (or half its own maximum). Below that the LUT is used as-is, so the
+// vanilla tone and grade are kept. Above it luminance continues at the LUT's
+// last octave slope, and the selected mapper compresses only above the knee.
+// Grade colour is sampled one octave below the walk end (WWII behaviour).
 //
+// Units: nits for LUT values; "relative" is nits / Game Brightness.
+// The LUT domain is treated as BT.2020 (it feeds the HDR10 output pass);
+// mappers receive the same values the previous path gave them.
 
-float GetDisplayPeakRelative()
+static const float3 BT2020_LUMINANCE = float3(0.2627f, 0.6780f, 0.0593f);
+static const float LUT_BASE_NITS = 100.0f;      // LUT as-is below; first walk point
+static const float LUT_CEILING_FRACTION = 0.5f; // never follow the LUT above half its maximum
+static const float LUT_MAX_SLOPE = 1.5f;        // cap on the continuation slope
+static const float SHOULDER_KNEE = 0.45f;       // fraction of Peak Brightness (as WWII)
+
+
+float3 SampleSceneLUTNits(float3 nits)
 {
-    float diffuseWhiteNits =
-        max(
-            RENODX_DIFFUSE_WHITE_NITS,
-            1.0f);
+    return codeTexture1.SampleLevel(
+        bilinearClamp,
+        PQEncodeNormalized(nits / 10000.0f) * COLDWAR_LUT_SCALE + COLDWAR_LUT_OFFSET,
+        0) * COLDWAR_GAME_UNIT_NITS;
+}
 
 
+float NeutralSceneLUTY(float nits)
+{
+    return max(dot(SampleSceneLUTNits(nits.xxx), BT2020_LUMINANCE), 0.0001f);
+}
+
+
+// Shoulder start in relative units; never below diffuse white.
+float ShoulderKneeRelative()
+{
     return max(
-        RENODX_PEAK_WHITE_NITS
-        / diffuseWhiteNits,
-        1.000001f);
+        SHOULDER_KNEE * RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.0f),
+        1.0f);
 }
 
 
-// ============================================================================
-// RenoDRT
-// ============================================================================
-
-float3 ApplyRenoDRT(
-    float3 sceneRelative)
+// Reserve the range below the knee. Each mapper's 0.18 anchor is translated
+// to the knee so switching mappers does not compress midtones again. Shared
+// grading has already run once, so the mappers get neutral grading.
+float3 MapShoulder(float3 color, float knee)
 {
-    sceneRelative =
-        SafePositive(
-            sceneRelative);
+    float peakRelative = max(
+        RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.0f) - knee + 0.18f,
+        0.180001f);
 
-
-    renodx::draw::Config config =
-        renodx::draw::BuildConfig();
-
-
-    config.reno_drt_tone_map_method =
-        renodx::tonemap::renodrt::config::tone_map_method::REINHARD;
-
-
-    float3 mapped =
-        renodx::draw::ToneMapPass(
-            sceneRelative,
-            config);
-
-
-    return SafePositive(
-        mapped);
-}
-
-
-// ============================================================================
-// PsychoV30
-// ============================================================================
-//
-// IMPORTANT:
-//
-// This does NOT reproduce or alter PsychoV30's algorithm.
-//
-// It calls the original uploaded psychotm_test30() function and passes its
-// existing parameters directly.
-//
-
-float3 ApplyPsychoV30(
-    float3 sceneRelative)
-{
-    sceneRelative =
-        SafePositive(
-            sceneRelative);
-
-
-    float displayPeak =
-        GetDisplayPeakRelative();
-
-
-    // PsychoV30's original implementation divides purity_scale by contrast.
-    // Prevent only the invalid exact-zero configuration at the wrapper level.
-    float psychoContrast =
-        max(
-            RENODX_TONE_MAP_CONTRAST,
-            0.0001f);
-
-
-    int gamutCompressionMode =
-        RENODX_PSYCHOV30_GAMUT_TARGET >= 0.5f
-            ? 1
-            : 0;
-
-
-    float3 mapped =
-        renodx::tonemap::psychov::psychotm_test30(
-            // Original direct linear BT.709 input.
-            sceneRelative,
-
-            // peak_value
-            displayPeak,
-
-            // exposure
-            max(
-                RENODX_TONE_MAP_EXPOSURE,
-                0.0f),
-
-            // highlights
-            RENODX_TONE_MAP_HIGHLIGHTS,
-
-            // shadows
-            RENODX_TONE_MAP_SHADOWS,
-
-            // contrast
-            psychoContrast,
-
-            // purity_scale
-            RENODX_PSYCHOV30_PURITY_SCALE,
-
-            // bleaching_intensity
-            1.0f,
-
-            // clip_point
-            100.0f,
-
-            // hue_restore
-            1.0f,
-
-            // encoded_response_power
-            1.0f,
-
-            // white_curve_mode
-            0,
-
-            // cone_response_exponent
-            RENODX_PSYCHOV30_CONE_RESPONSE,
-
-            // current_adaptive_state_bt709
-            0.18f.xxx,
-
-            // current_background_state_bt709
-            0.18f.xxx,
-
-            // gamut_compression
-            RENODX_PSYCHOV30_GAMUT_COMPRESSION,
-
-            // gamut_compression_mode
-            //
-            // 0       = BT.709
-            // nonzero = BT.2020
-            gamutCompressionMode,
-
-            // adaptive_normalization
-            1.0f,
-
-            // compression
-            RENODX_PSYCHOV30_COMPRESSION);
-
-
-    return SafePositive(
-        mapped);
-}
-
-
-// ============================================================================
-// Pragmap
-// ============================================================================
-//
-// IMPORTANT:
-//
-// The supplied Pragmap function is left completely unchanged.
-//
-// Original signature:
-//
-//     pragmap(
-//         color,
-//         peak,
-//         hueStrength,
-//         blowoutStrength)
-//
-// These sliders feed exactly those existing parameters.
-//
-
-float3 ApplyPragmap(
-    float3 sceneRelative)
-{
-    sceneRelative =
-        SafePositive(
-            sceneRelative);
-
-
-    // Pragmap does not expose exposure as one of its own arguments.
-    // Apply RenoDX exposure to the incoming scene signal.
-    sceneRelative *=
-        max(
-            RENODX_TONE_MAP_EXPOSURE,
-            0.0f);
-
-
-    float displayPeak =
-        GetDisplayPeakRelative();
-
-
-    float3 mapped =
-        pragmap(
-            sceneRelative,
-            displayPeak,
-
-            // Original hueStrength parameter.
-            RENODX_PRAGMAP_HUE_STRENGTH,
-
-            // Original blowoutStrength parameter.
-            RENODX_PRAGMAP_BLOWOUT_STRENGTH);
-
-
-    return SafePositive(
-        mapped);
-}
-
-
-// ============================================================================
-// Tone mapper selection
-// ============================================================================
-
-float3 ApplySelectedToneMapper(
-    float3 sceneRelative)
-{
     [branch]
     if (IsPsychoV30Mode())
     {
-        return ApplyPsychoV30(
-            sceneRelative);
+        return renodx::tonemap::psychov::psychotm_test30(
+            color, peakRelative, 1.0f, 1.0f, 1.0f, 1.0f,
+            RENODX_PSYCHOV30_PURITY_SCALE, 1.0f, 100.0f, 1.0f, 1.0f, 0,
+            max(RENODX_PSYCHOV30_CONE_RESPONSE, 0.0001f), 0.18f.xxx, 0.18f.xxx,
+            RENODX_PSYCHOV30_GAMUT_COMPRESSION,
+            RENODX_PSYCHOV30_GAMUT_TARGET >= 0.5f ? 1 : 0, 1.0f,
+            RENODX_PSYCHOV30_COMPRESSION);
     }
-
 
     [branch]
-    if (IsPragmapMode())
+    if (IsPrismMode())
     {
-        return ApplyPragmap(
-            sceneRelative);
+        return prism(color, peakRelative);
     }
 
-
-    // Only remaining custom UI mode is RenoDRT.
-    return ApplyRenoDRT(
-        sceneRelative);
+    renodx::draw::Config config = renodx::draw::BuildConfig();
+    config.peak_white_nits = peakRelative * RENODX_DIFFUSE_WHITE_NITS;
+    config.reno_drt_tone_map_method =
+        renodx::tonemap::renodrt::config::tone_map_method::REINHARD;
+    config.tone_map_exposure = 1.0f;
+    config.tone_map_highlights = 1.0f;
+    config.tone_map_shadows = 1.0f;
+    config.tone_map_contrast = 1.0f;
+    config.tone_map_saturation = 1.0f;
+    config.tone_map_highlight_saturation = 1.0f;
+    config.tone_map_blowout = 0.0f;
+    config.tone_map_flare = 0.0f;
+    return renodx::draw::ToneMapPass(color, config);
 }
 
 
-
-// ============================================================================
-// Gentle upper-highlight rolloff
-// ============================================================================
-//
-// Input/output are RenoDX reference-white-relative linear values:
-//
-//     1.0 = RENODX_DIFFUSE_WHITE_NITS
-//
-// Rolloff is calculated from the brightest RGB channel, then RGB is scaled
-// uniformly so highlight hue is preserved.
-//
-float RollOffHighlightPeakRelative(
-    float value,
-    float displayPeak)
+// Returns linear game units (1.0 = 100 nits), the scene LUT's output units.
+float3 MapSceneHDR(float3 nativeLinear10000, float3 pixelLUTNits)
 {
-    displayPeak =
-        max(
-            displayPeak,
-            1.000001f);
+    float3 sourceNits = SafePositive(nativeLinear10000) * 10000.0f;
+    float sourceY = max(dot(sourceNits, BT2020_LUMINANCE), 0.0f);
+    float gradeStrength = saturate(RENODX_COLOR_GRADE_STRENGTH);
+    float diffuseNits = max(RENODX_DIFFUSE_WHITE_NITS, 1.0f);
+    float knee = ShoulderKneeRelative();
 
-    float shoulderStart =
-        displayPeak
-        * HIGHLIGHT_ROLLOFF_START_RATIO;
-
-    if (value <= shoulderStart)
+    float3 gradedNits;
+    [branch]
+    if (sourceY <= LUT_BASE_NITS)
     {
-        return value;
+        float3 neutralNits = sourceNits
+            * (NeutralSceneLUTY(sourceY) / max(sourceY, 0.000001f));
+        gradedNits = lerp(neutralNits, pixelLUTNits, gradeStrength);
+    }
+    else
+    {
+        float kneeNits = knee * diffuseNits;
+        float ceilingY = NeutralSceneLUTY(10000.0f) * LUT_CEILING_FRACTION;
+        float shoulderX = LUT_BASE_NITS;
+        float shoulderY = NeutralSceneLUTY(shoulderX);
+        float slope = 1.0f;
+        [loop]
+        for (int i = 0; i < 7; ++i)  // walk up to 12800 nits
+        {
+            float nextY = NeutralSceneLUTY(shoulderX * 2.0f);
+            if (nextY > kneeNits || nextY > ceilingY) break;
+            slope = min(log2(nextY / shoulderY), LUT_MAX_SLOPE);
+            shoulderX *= 2.0f;
+            shoulderY = nextY;
+        }
+
+        float toneY = sourceY <= shoulderX
+            ? NeutralSceneLUTY(sourceY)
+            : shoulderY * pow(sourceY / shoulderX, slope);
+
+        float sampleY = min(sourceY, max(shoulderX * 0.5f, LUT_BASE_NITS));
+        float3 sampleNits = sourceNits * (sampleY / sourceY);
+        float neutralY = NeutralSceneLUTY(sampleY);
+        float3 neutralNits = sampleNits * (neutralY / sampleY);
+        float3 nativeNits = sampleY < sourceY ? SampleSceneLUTNits(sampleNits) : pixelLUTNits;
+        gradedNits = lerp(neutralNits, nativeNits, gradeStrength) * (toneY / neutralY);
     }
 
-    float shoulderRange =
-        max(
-            displayPeak
-            - shoulderStart,
-            0.000001f);
+    float3 relative = gradedNits / diffuseNits;
 
-    float distance =
-        max(
-            value
-            - shoulderStart,
-            0.0f);
+    renodx::color::grade::Config grade = renodx::color::grade::config::Create();
+    grade.exposure = RENODX_TONE_MAP_EXPOSURE;
+    grade.highlights = RENODX_TONE_MAP_HIGHLIGHTS;
+    grade.shadows = RENODX_TONE_MAP_SHADOWS;
+    grade.contrast = RENODX_TONE_MAP_CONTRAST;
+    grade.flare = 0.10f * pow(max(RENODX_TONE_MAP_FLARE, 0.0f), 10.0f);
+    grade.saturation = RENODX_TONE_MAP_SATURATION;
+    grade.hue_correction_strength = 0.0f;
+    relative = renodx::color::grade::config::ApplyUserColorGrading(relative, grade);
 
-    // Rational shoulder:
-    //   shoulderStart -> unchanged
-    //   displayPeak   -> halfway through the remaining shoulder range
-    //   extreme input -> approaches displayPeak smoothly
-    return shoulderStart
-        + shoulderRange
-        * (
-            distance
-            / (
-                distance
-                + shoulderRange));
-}
-
-
-float3 ApplyGentleHighlightRolloff(
-    float3 mappedRelative)
-{
-    mappedRelative =
-        SafePositive(
-            mappedRelative);
-
-    float sourcePeak =
-        Max3(
-            mappedRelative);
-
-    float displayPeak =
-        GetDisplayPeakRelative();
-
-    float shoulderStart =
-        displayPeak
-        * HIGHLIGHT_ROLLOFF_START_RATIO;
-
-    if (sourcePeak <= shoulderStart)
+    if (!IsPsychoV30Mode() && RENODX_TONE_MAP_PER_CHANNEL == 0.0f)
     {
-        return mappedRelative;
+        float y = max(dot(relative, BT2020_LUMINANCE), 0.0f);
+        if (y > knee)
+        {
+            float mappedY = MapShoulder((y - knee + 0.18f).xxx, knee).x;
+            relative *= (knee + max(mappedY - 0.18f, 0.0f)) / y;
+        }
+    }
+    else if (Max3(relative) > knee)
+    {
+        float3 aboveKnee = max(relative - knee, 0.0f);
+        relative = min(relative, knee)
+            + max(MapShoulder(aboveKnee + 0.18f, knee) - 0.18f, 0.0f);
     }
 
-    float rolledPeak =
-        RollOffHighlightPeakRelative(
-            sourcePeak,
-            displayPeak);
+    // Chroma controls use absolute luminance (100-nit library normalization).
+    grade = renodx::color::grade::config::Create();
+    grade.hue_correction_strength = 0.0f;
+    grade.dechroma = RENODX_TONE_MAP_BLOWOUT;
+    grade.blowout = 1.0f - RENODX_TONE_MAP_HIGHLIGHT_SATURATION;
+    relative = renodx::color::grade::config::ApplyUserColorGrading(
+        relative * (diffuseNits / 100.0f), grade) * (100.0f / diffuseNits);
 
-    float scale =
-        rolledPeak
-        / max(
-            sourcePeak,
-            0.000001f);
+    relative = SafePositive(renodx::draw::RenderIntermediatePass(SafePositive(relative)));
 
-    return SafePositive(
-        mappedRelative
-        * scale);
-}
-
-
-// ============================================================================
-// Emergency configured-peak overshoot protection
-// ============================================================================
-//
-// This is not another shoulder. It remains completely inactive unless the
-// mapped result exceeds the configured peak by more than a tiny tolerance.
-//
-float3 ApplyPeakOvershootProtection(
-    float3 mappedRelative)
-{
-    mappedRelative =
-        SafePositive(
-            mappedRelative);
-
-    float sourcePeak =
-        Max3(
-            mappedRelative);
-
-    float displayPeak =
-        GetDisplayPeakRelative();
-
-    float allowedPeak =
-        displayPeak
-        * PEAK_OVERSHOOT_TOLERANCE;
-
-    if (sourcePeak <= allowedPeak)
-    {
-        return mappedRelative;
-    }
-
-    float scale =
-        displayPeak
-        / max(
-            sourcePeak,
-            0.000001f);
-
-    return SafePositive(
-        mappedRelative
-        * scale);
-}
-
-
-// ============================================================================
-// Cold War HDR -> scene relative -> display mapper -> Cold War HDR
-// ============================================================================
-//
-// MIDTONE SCALE FIX:
-//
-// OLD:
-//
-//     Input:
-//       1.0 relative = 100 nits
-//
-//     Output:
-//       1.0 relative = Game Brightness, normally 203 nits
-//
-// That could turn:
-//
-//     100 nits -> 1.0 -> 203 nits
-//
-// and raise the middle range.
-//
-// NEW:
-//
-// Both directions use RENODX_DIFFUSE_WHITE_NITS.
-//
-// At Game Brightness = 203:
-//
-//     100 nits
-//       -> 100 / 203
-//       -> tonemapper
-//       -> * 203
-//
-// so the bridge itself no longer adds the old ~2.03x mismatch.
-//
-
-float3 ApplyRenoDXToNativeHDR(
-    float3 nativeLinear10000)
-{
-    float diffuseWhiteNits =
-        max(
-            RENODX_DIFFUSE_WHITE_NITS,
-            1.0f);
-
-    // Native Cold War HDR:
-    //
-    //     1.0 = 10,000 nits
-    //
-    // RenoDX scene-relative:
-    //
-    //     1.0 = RENODX_DIFFUSE_WHITE_NITS
-    //
-    float3 sceneRelative =
-        SafePositive(
-            nativeLinear10000)
-        * (
-            10000.0f
-            / diffuseWhiteNits);
-
-    // Primary display mapping now lives in this shader.
-    float3 mappedRelative =
-        ApplySelectedToneMapper(
-            sceneRelative);
-
-    mappedRelative =
-        SafePositive(
-            mappedRelative);
-
-    // No additional common highlight shoulder here.
-    // RenoDRT / PsychoV30 / Pragmap keep full control of their mapped result.
-    // Final overshoot-only protection is performed later in A93248D1, after
-    // Cold War's remaining HDR output processing, so normal highlights are not
-    // compressed twice.
-
-    // RenoDX intermediate stage requested for the primary tonemapper.
-    //
-    // Vanilla deliberately does NOT pass through this function; the Vanilla
-    // branch below remains the reconstructed original Cold War shader.
-    mappedRelative =
-        SafePositive(
-            renodx::draw::RenderIntermediatePass(
-                mappedRelative));
-
-    // Convert back to Cold War's normalized absolute-linear HDR domain.
-    float3 mappedLinear10000 =
-        mappedRelative
-        * (
-            diffuseWhiteNits
-            / 10000.0f);
-
-    // PQ is physically defined only through 10,000 nits. This is only the
-    // physical PQ-domain guard, not the configured display-peak limiter.
-    return min(
-        SafePositive(
-            mappedLinear10000),
-        1.0f.xxx);
+    // PQ is physically defined only through 10,000 nits; the display-peak
+    // limit is applied after the late output LUT in A93248D1.
+    return min(relative * diffuseNits, 10000.0f) / COLDWAR_GAME_UNIT_NITS;
 }
 
 
@@ -911,40 +593,18 @@ float4 main(
 
 
     // ------------------------------------------------------------------------
-    // Custom primary tonemapper:
-    // RenoDRT / PsychoV30 / Pragmap -> peak protection -> RenderIntermediatePass
+    // Custom modes: live scene LUT first, mapper above the knee (MapSceneHDR)
     // ------------------------------------------------------------------------
 
-    float3 mappedLinear10000 =
-        ApplyRenoDXToNativeHDR(
-            nativeLinear10000);
-
-
-    float3 mappedPQ =
-        PQEncodeNormalized(
-            mappedLinear10000);
-
-
-    // Preserve Cold War's native HDR grading LUT.
-    float3 gradedPQ =
+    float3 pixelLUTNits =
         SampleNativeHDRLUT(
-            mappedPQ);
-
-
-    float sceneGradeStrength =
-        saturate(
-            RENODX_COLOR_GRADE_STRENGTH);
-
-
-    float3 finalColor =
-        lerp(
-            mappedPQ,
-            gradedPQ,
-            sceneGradeStrength);
-
+            PQEncodeNormalized(
+                nativeLinear10000))
+        * COLDWAR_GAME_UNIT_NITS;
 
     return float4(
-        SafePositive(
-            finalColor),
+        MapSceneHDR(
+            nativeLinear10000,
+            pixelLUTNits),
         1.0f);
 }

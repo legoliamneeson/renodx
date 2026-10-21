@@ -1,7 +1,7 @@
 #ifndef SRC_GHOSTS_SHARED_H_
 #define SRC_GHOSTS_SHARED_H_
 
-#define RENODX_GHOSTS_TONEMAPPER_LAYOUT_VERSION 4
+#define RENODX_GHOSTS_TONEMAPPER_LAYOUT_VERSION 5
 
 // Must be 32-bit aligned.
 // Existing fields stay in their original order; custom controls are appended.
@@ -42,7 +42,7 @@ struct ShaderInjectData {
   float custom_flip_uv_y;
 
   // Legacy PsychoV24 storage retained only to keep all later injected
-  // constant-buffer offsets unchanged. Pragmap does not use these fields.
+  // constant-buffer offsets unchanged. These fields are unused by Prism.
   float psychov24_compression;
   float psychov24_gamut_compression;
   float psychov24_gamut_mode;
@@ -57,22 +57,34 @@ struct ShaderInjectData {
   float blur_strength;
   float blur_padding0;
 
-  // Pragmap controls.
-  //
-  // These are appended AFTER all existing fields so every previous injected
-  // constant-buffer offset remains unchanged.
+  // Retired Pragmap controls: retain this storage so subsequent injected
+  // constant-buffer offsets stay compatible with existing addons/live shaders.
+  // Prism uses the supplied fixed curve and does not read these fields.
   float pragmap_hue_strength;
   float pragmap_blowout_strength;
   float pragmap_shoulder;
   float pragmap_shoulder_compression;
 
   // Temporal exposure adaptation control.
-  // 1.0 = original game adaptation speed.
+  // 1.0 = full speed; exact original behavior requires Original mode.
   // 0.0 = exposure is effectively held/frozen.
   float auto_exposure_adaptation_speed;
-  float auto_exposure_adaptation_padding0;
+  float auto_exposure_smoothing;  // 0 = original limiter, 1 = HDR smoothing.
   float auto_exposure_adaptation_padding1;
   float auto_exposure_adaptation_padding2;
+
+  // Bloom blur intermediate mix.
+  float bloom_internal_blend;
+  float bloom_internal_blend_padding0;
+  float bloom_internal_blend_padding1;
+  float bloom_internal_blend_padding2;
+
+  // Bloom mode: 0 = energy-conserving, 1 = vanilla.
+  // Reuses the retired peak-preserving control's constant-buffer offsets.
+  float bloom_mode;
+  float bloom_mode_padding0;
+  float bloom_mode_padding1;
+  float bloom_mode_padding2;
 };
 
 #ifndef __cplusplus
@@ -105,6 +117,11 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_BLOWOUT               shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE                 shader_injection.tone_map_flare
 
+#ifndef RENODX_TONE_MAP_TYPE_PRISM
+#define RENODX_TONE_MAP_TYPE_PRISM 4.f
+#endif
+
+// Legacy definitions support the inactive archived Pragmap source.
 #ifndef RENODX_TONE_MAP_TYPE_PRAGMAP
 #define RENODX_TONE_MAP_TYPE_PRAGMAP 4.f
 #endif
@@ -127,6 +144,16 @@ cbuffer shader_injection : register(b13) {
 
 #ifndef RENODX_BLUR_STRENGTH
 #define RENODX_BLUR_STRENGTH shader_injection.blur_strength
+#endif
+
+#ifndef RENODX_FX_BLOOM_STRENGTH
+#define RENODX_FX_BLOOM_STRENGTH shader_injection.fxBloom
+#endif
+#ifndef RENODX_BLOOM_INTERNAL_BLEND
+#define RENODX_BLOOM_INTERNAL_BLEND shader_injection.bloom_internal_blend
+#endif
+#ifndef RENODX_BLOOM_MODE
+#define RENODX_BLOOM_MODE shader_injection.bloom_mode
 #endif
 
 #ifndef RENODX_GHOSTS_AUTO_EXPOSURE_STRENGTH

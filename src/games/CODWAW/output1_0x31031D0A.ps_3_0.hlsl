@@ -406,6 +406,13 @@ float3 ApplyPsycho(
         : 0;
 
     // Common RenoDX grading controls were already applied above.
+    // PsychoV expects scene-linear BT.709, so decode the 2.2-encoded direct
+    // output here. The encode after PsychoV restores the same output domain.
+    color =
+        renodx::color::gamma::DecodeSafe(
+            color
+        );
+
     // Dedicated Psycho controls are passed directly to psychov.hlsl.
     color =
         renodx::tonemap::psychov::psychotm_test30(
@@ -430,7 +437,9 @@ float3 ApplyPsycho(
             RENODX_PSYCHO_COMPRESSION
         );
 
-    return SafePositive(color);
+    return renodx::color::gamma::EncodeSafe(
+        SafePositive(color)
+    );
 }
 
 

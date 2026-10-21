@@ -29,9 +29,9 @@
 #include "./shared.h"
 
 #ifndef RENODX_GHOSTS_TONEMAPPER_LAYOUT_VERSION
-#error "CODGHOSTS: shared.h is outdated. Replace shared.h with the Pragmap tonemapper version from the same package."
+#error "CODGHOSTS: shared.h is outdated. Replace shared.h with the matching Ghosts tonemapper version from the same package."
 #elif RENODX_GHOSTS_TONEMAPPER_LAYOUT_VERSION < 3
-#error "CODGHOSTS: shared.h is missing the Pragmap addon-control fields. Replace shared.h from the same package."
+#error "CODGHOSTS: shared.h is missing the compatible addon-control layout. Replace shared.h from the same package."
 #endif
 
 namespace {
@@ -49,7 +49,7 @@ float current_settings_mode = 0;
 
 constexpr float TONE_MAP_TYPE_VANILLA = 0.f;
 constexpr float TONE_MAP_TYPE_RENODRT = 3.f;
-constexpr float TONE_MAP_TYPE_PRAGMAP = 4.f;
+constexpr float TONE_MAP_TYPE_PRISM = 4.f;
 
 inline bool IsCustomToneMapperEnabled() {
   return shader_injection.tone_map_type != TONE_MAP_TYPE_VANILLA;
@@ -59,8 +59,8 @@ inline bool IsRenoDRTEnabled() {
   return shader_injection.tone_map_type == TONE_MAP_TYPE_RENODRT;
 }
 
-inline bool IsPragmapEnabled() {
-  return shader_injection.tone_map_type == TONE_MAP_TYPE_PRAGMAP;
+inline bool IsEnergyConservingBloomEnabled() {
+  return shader_injection.bloom_mode < 0.5f;
 }
 
 renodx::utils::settings::Settings settings = {
@@ -83,11 +83,11 @@ renodx::utils::settings::Settings settings = {
         .label = "Tone Mapper",
         .section = "Tone Mapping",
         .tooltip = "Sets the tone mapper type",
-        .labels = {"Vanilla", "RenoDRT", "Pragmap"},
+        .labels = {"Vanilla", "RenoDRT", "Prism"},
         .parse = [](float value) {
           if (value < 0.5f) return TONE_MAP_TYPE_VANILLA;
           if (value < 1.5f) return TONE_MAP_TYPE_RENODRT;
-          return TONE_MAP_TYPE_PRAGMAP;
+          return TONE_MAP_TYPE_PRISM;
         },
         .is_visible = []() { return current_settings_mode >= 1; },
     },
@@ -301,68 +301,7 @@ renodx::utils::settings::Settings settings = {
         .is_enabled = []() { return IsRenoDRTEnabled(); },
         .parse = [](float value) { return value * 0.02f; },
     },
-    // -------------------------------------------------------------------------
-    // Pragmap controls
-    // -------------------------------------------------------------------------
-    //
-    // These settings are only shown in Advanced mode while Pragmap is the
-    // selected tone mapper.
-    new renodx::utils::settings::Setting{
-        .key = "PragmapHueStrength",
-        .binding = &shader_injection.pragmap_hue_strength,
-        .default_value = 25.f,
-        .label = "Hue Strength",
-        .section = "Pragmap",
-        .tooltip = "Pragmap highlight hue response. 25% preserves the original Pragmap default. Values above 25% are expanded in the shader for a stronger useful range.",
-        .min = 0.f,
-        .max = 100.f,
-        .format = "%.0f%%",
-        .parse = [](float value) { return value * 0.01f; },
-        .is_enabled = []() { return IsPragmapEnabled(); },
-        .is_visible = []() { return current_settings_mode >= 2 && IsPragmapEnabled(); },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "PragmapBlowoutStrength",
-        .binding = &shader_injection.pragmap_blowout_strength,
-        .default_value = 20.f,
-        .label = "Blowout",
-        .section = "Pragmap",
-        .tooltip = "Pragmap highlight dechroma/blowout. 20% preserves the original default. Values above 20% are expanded in the shader for a stronger useful range.",
-        .min = 0.f,
-        .max = 100.f,
-        .format = "%.0f%%",
-        .parse = [](float value) { return value * 0.01f; },
-        .is_enabled = []() { return IsPragmapEnabled(); },
-        .is_visible = []() { return current_settings_mode >= 2 && IsPragmapEnabled(); },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "PragmapShoulder",
-        .binding = &shader_injection.pragmap_shoulder,
-        .default_value = 80.f,
-        .label = "Shoulder",
-        .section = "Pragmap",
-        .tooltip = "Controls an external post-Pragmap peak shoulder. 80% keeps the original Pragmap output unchanged; moving it applies an extra shoulder stage after Pragmap.",
-        .min = 1.f,
-        .max = 99.f,
-        .format = "%.0f%%",
-        .parse = [](float value) { return value * 0.01f; },
-        .is_enabled = []() { return IsPragmapEnabled(); },
-        .is_visible = []() { return current_settings_mode >= 2 && IsPragmapEnabled(); },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "PragmapShoulderCompression",
-        .binding = &shader_injection.pragmap_shoulder_compression,
-        .default_value = 75.f,
-        .label = "Shoulder Compression",
-        .section = "Pragmap",
-        .tooltip = "Controls Pragmap's main luminance shoulder compression. 75% = the original Pragmap toneCompression value of 1.50. Lower values compress less; higher values compress highlights more strongly.",
-        .min = 1.f,
-        .max = 400.f,
-        .format = "%.0f%%",
-        .parse = [](float value) { return value * 0.01f; },
-        .is_enabled = []() { return IsPragmapEnabled(); },
-        .is_visible = []() { return current_settings_mode >= 2 && IsPragmapEnabled(); },
-    },
+    // Prism uses the supplied fixed curve/matrices; general color controls apply.
     new renodx::utils::settings::Setting{
         .key = "ColorGradeScene",
         .binding = &shader_injection.color_grade_strength,
@@ -390,18 +329,30 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return false; },
     },
     new renodx::utils::settings::Setting{
+        .key = "AutoExposureMode",
+        .binding = &shader_injection.auto_exposure_smoothing,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Auto Exposure Mode",
+        .section = "Effects",
+        .tooltip = "HDR Smooth filters small exposure fluctuations in stops using existing history. Original retains the game movement limiter. Vanilla always uses original adaptation at full speed.",
+        .labels = {"Original", "HDR Smooth"},
+        .is_enabled = []() { return IsCustomToneMapperEnabled(); },
+        .is_visible = []() { return false; },
+    },
+    new renodx::utils::settings::Setting{
         .key = "AutoExposureAdaptationSpeed",
         .binding = &shader_injection.auto_exposure_adaptation_speed,
-        .default_value = 20.f,
+        .default_value = 100.f,
         .label = "Auto Exposure Adapt Speed",
         .section = "Effects",
-        .tooltip = "Controls how quickly the game exposure adapts over time. 100% = original game adaptation speed, 35% = calmer HDR adaptation, 0% = exposure is effectively held. This changes the temporal adaptation rate itself, unlike Auto Exposure Strength which only reduces the size of the exposure change.",
+        .tooltip = "Controls the adaptation rate. HDR Smooth also filters small changes; Original at 100% restores the game adaptation. 20% is the default; 0% holds exposure within the current game limits.",
         .min = 0.f,
         .max = 100.f,
         .format = "%.0f%%",
         .parse = [](float value) { return value * 0.01f; },
         .is_enabled = []() { return IsCustomToneMapperEnabled(); },
-        .is_visible = []() { return current_settings_mode >= 1; },
+        .is_visible = []() { return false; },
     },
     new renodx::utils::settings::Setting{
         .key = "BlurStrength",
@@ -414,6 +365,43 @@ renodx::utils::settings::Settings settings = {
         .max = 100.f,
         .format = "%.0f%%",
         .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "BloomStrength",
+        .binding = &shader_injection.fxBloom,
+        .default_value = 30.f,
+        .label = "Bloom Blend",
+        .section = "Effects",
+        .tooltip = "Blends the scene toward the bloom blur in Energy-Conserving mode. 0% keeps the source scene; 100% uses the blurred scene. Vanilla uses the game's original bloom settings.",
+        .min = 0.f,
+        .max = 100.f,
+        .format = "%.0f%%",
+        .parse = [](float value) { return value * 0.01f; },
+        .is_enabled = []() { return IsEnergyConservingBloomEnabled(); },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "BloomInternalBlend",
+        .binding = &shader_injection.bloom_internal_blend,
+        .default_value = 85.f,
+        .label = "Bloom Internal Blend",
+        .section = "Effects",
+        .tooltip = "Blends each bloom blur pass between its input and blurred output. 85% approximates the article's internal upsample blend; lower values retain more sharp HDR detail.",
+        .min = 0.f,
+        .max = 100.f,
+        .format = "%.0f%%",
+        .parse = [](float value) { return value * 0.01f; },
+        .is_enabled = []() { return IsEnergyConservingBloomEnabled(); },
+    },
+    new renodx::utils::settings::Setting{
+        // Keep saved energy-conserving index 0; replace the retired mode 1 with vanilla.
+        .key = "BloomCompositeMode",
+        .binding = &shader_injection.bloom_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Bloom Mode",
+        .section = "Effects",
+        .tooltip = "Vanilla restores the game's original threshold, Gaussian blur and bloom composite. Energy-Conserving removes the threshold and blends the scene toward the blur using Bloom Blend and Bloom Internal Blend.",
+        .labels = {"Energy-Conserving", "Vanilla"},
     },
     new renodx::utils::settings::Setting{
         .key = "SwapChainCustomColorSpace",
@@ -547,7 +535,6 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   switch (fdw_reason) {
     case DLL_PROCESS_ATTACH:
       if (!reshade::register_addon(h_module)) return FALSE;
-
 #if RENODX_WAIT_FOR_DEBUGGER
       OutputDebugStringA("[RenoDX Addon] Waiting for debugger before initialization...\n");
       while (IsDebuggerPresent() == FALSE) {
