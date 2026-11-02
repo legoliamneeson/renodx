@@ -160,6 +160,54 @@ visible scene. The baseline was unloaded and the default live directory restored
 DevKit cannot toggle the game addon's resource clones, so native upgrades require
 an addon rebuild and restart. No game shader files or upscaler DLLs were edited.
 
+## Motion blur disabled — 2026-10-24
+
+DevKit capture (`renodx-devkit-mcp-31328`) with DLSS upscaling and motion
+blur off: the engine replaces the final upscaled blur `0x29CCB91A` with a
+plain final copy, `0x71B33647` (post-upscaler FP16 alias → swapchain proxy).
+It applies ColorScale, the fade overlay, `saturate()` and `InverseGamma`.
+Because DLSS upscaling now receives linear light, that shader read linear
+color as gamma (crushed shadows), and its clamp limited output to UI white.
+
+`0x71B33647.ps_5_0.hlsl` replaces it. With the DLSS linear flag set it
+encodes the sample back to gamma 2.2, as `0x29CCB91A` does per tap; HDR
+modes use `max(0, …)` instead of `saturate()` and keep the same peak bound
+for DLSS overshoot. Fade, color scale and `InverseGamma` are unchanged.
+Vanilla, DLAA, FSR2/native and an unbound injection buffer keep their
+original input domain and clamp behavior.
+
+## FSR1 HDR — 2026-10-24
+
+DevKit capture (`renodx-devkit-mcp-21088`) with FSR1 selected: no DLSS
+create, and `0x29CCB91A` is not used. The chain is grade `0x4D17CEAB` → copy →
+original motion blur `0x51477221` → filter `0x42E6922B` → copy → EASU
+`0x7194ED7A` → RCAS `0xD844C4C3` into the swapchain proxy, all on native
+FP16 output-sized textures. EASU has no clamp and its output held values
+up to 2.5. RCAS ended in `saturate()` and its ring limiter assumed a 0–1
+range, so FSR1 clipped the scene at UI white.
+
+`0xD844C4C3.ps_5_0.hlsl` replaces RCAS. In HDR modes the limiter uses
+`range = max(1, pow(peak/ui_white, 1/2.2))` in place of 1 (equivalent to
+RCAS on color/range, scaled back), and the final clamp becomes `max(0, …)`.
+Color scale and fade overlay are kept; Vanilla and an unbound injection buffer
+keep the original shader. Compiled with the user's FXC through DevKit live
+loading (live copies unloaded afterwards); in-game HDR output needs the rebuilt addon.
+
+## DLSS black-screen regression — 2026-10-24
+
+After a game update, ReShade logged `flags 0x8 -> 0x19, 2559x1439 -> 3839x2159`:
+the DLSS output size is now one pixel short of the 3840×2160 backbuffer.
+DevKit capture (`renodx-devkit-mcp-27276`): the grade target was populated,
+the DLSS input received FP16 linear color, but the post-DLSS FP16 sampling
+alias read entirely zero after the engine copy, so the final upscaled blur
+was black under the UI. The "DLSS Output" rule matched exact backbuffer
+dimensions, so the 3839×2159 private NGX output stayed RGBA8 and the
+RGBA8-to-FP16 copy was dropped by D3D11. The rule now matches the backbuffer
+aspect ratio (tolerance 0.01) with the same exact usage `0x1cc8`, following
+the `aspect_ratio = BACK_BUFFER` pattern used by other RenoDX mods. The NGX
+output format itself was inferred, not read back. After rebuilding, the
+post-DLSS alias should be nonzero and the scene visible in all DLSS modes.
+
 ## DLSS SDR-peak clipping capture — 2026-10-04
 
 Connection `renodx-devkit-mcp-1332` captured 3,116 records and 357 shaders with

@@ -24,6 +24,8 @@ namespace {
 renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0x4D17CEAB),
     CustomShaderEntry(0x29CCB91A),
+    CustomShaderEntry(0xD844C4C3),  // FSR1 RCAS final pass
+    CustomShaderEntry(0x71B33647),  // final copy when motion blur is off
 };
 
 ShaderInjectData shader_injection = {
@@ -404,7 +406,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
 
       // The DLSS output has UAV/SRV usage, without render_target. Retain its
       // captured native upgrade so NGX can write unclipped HDR to that texture.
-      // UE3 allocates it at output size even when rendering a smaller rect.
+      // The wrapper allocates it at the requested output size, which can be
+      // one pixel short of the backbuffer (e.g. 3839x2159 for 3840x2160).
+      // Match by backbuffer aspect ratio, not exact size: an unmatched RGBA8
+      // output makes the engine's copy into the FP16 alias fail (black scene).
       constexpr auto color_copy_usage = reshade::api::resource_usage::copy_source
                                         | reshade::api::resource_usage::copy_dest
                                         | reshade::api::resource_usage::resolve_dest;
@@ -412,13 +417,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
           .old_format = reshade::api::format::r8g8b8a8_unorm,
           .new_format = reshade::api::format::r16g16b16a16_float,
           .usage = color_copy_usage | reshade::api::resource_usage::unordered_access | reshade::api::resource_usage::shader_resource,
-          .dimensions = {
-              .width = renodx::utils::resource::ResourceUpgradeInfo::BACK_BUFFER,
-              .height = renodx::utils::resource::ResourceUpgradeInfo::BACK_BUFFER,
-              .depth = 1,
-          },
+          .aspect_ratio = renodx::utils::resource::ResourceUpgradeInfo::BACK_BUFFER,
+          .aspect_ratio_tolerance = 0.01f,
           .name = "DLSS Output",
-      }); 
+      });
       break;
     }
     case DLL_PROCESS_DETACH:

@@ -76,20 +76,28 @@ float4 main(float4 vpos : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
   config.gamma_correction = 0.f;  // Already decoded above.
 
   [branch]
-  if (shader_injection.tone_map_type == RENODX_TONE_MAP_TYPE_PSYCHOV30) {
-    color = ApplyPsychoV30(color, config);
+  if (shader_injection.custom_scene_tone_mapped != 0.f) {
+    // The OpenGL pre-UI pass already tone mapped the 3D scene before Doom 3
+    // drew its HUD/menus, and stored it relative to UI white. Only display
+    // scaling remains, so the UI lands at UI Brightness without tone mapping.
+    config.swap_chain_scaling_nits = config.graphics_white_nits;
   } else {
-    // RenoDRT path. This is forward mapping of the preserved scene signal, not
-    // inverse tonemapping of a completed/clamped SDR image.
-    color = renodx::draw::ToneMapPass(color, config);
-    color = SanitizeSceneColor(color);
+    [branch]
+    if (shader_injection.tone_map_type == RENODX_TONE_MAP_TYPE_PSYCHOV30) {
+      color = ApplyPsychoV30(color, config);
+    } else {
+      // RenoDRT path. This is forward mapping of the preserved scene signal, not
+      // inverse tonemapping of a completed/clamped SDR image.
+      color = renodx::draw::ToneMapPass(color, config);
+      color = SanitizeSceneColor(color);
+    }
+    // The result is linear BT.709 relative to game/reference white.
+    config.swap_chain_scaling_nits = config.diffuse_white_nits;
   }
 
-  // The result is already linear BT.709 relative to game/reference white.
   // Keep the final proxy limited to display encoding/scaling.
   config.swap_chain_decoding = renodx::draw::ENCODING_NONE;
   config.swap_chain_gamma_correction = 0.f;
   config.swap_chain_decoding_color_space = renodx::color::convert::COLOR_SPACE_BT709;
-  config.swap_chain_scaling_nits = config.diffuse_white_nits;
   return float4(renodx::draw::SwapChainPass(color, uv, config), 1.f);
 }

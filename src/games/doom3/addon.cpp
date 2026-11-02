@@ -55,6 +55,7 @@
 #include "../../utils/settings.hpp"
 
 #include "./shared.h"
+#include "./hidden_cursor.hpp"
 #include "./opengl_framebuffer.hpp"
 
 
@@ -95,9 +96,9 @@ float current_settings_mode = 0;
 
 constexpr float TONE_MAP_TYPE_VANILLA = 0.f;
 
-constexpr float TONE_MAP_TYPE_RENODRT = 3.f;
+using doom3::opengl::TONE_MAP_TYPE_RENODRT;
 
-constexpr float TONE_MAP_TYPE_PSYCHOV30 = 30.f;
+using doom3::opengl::TONE_MAP_TYPE_PSYCHOV30;
 
 
 
@@ -235,11 +236,33 @@ renodx::utils::settings::Settings settings = {
 
         .section = "Tone Mapping",
 
-        .tooltip = "Sets the brightness of UI and HUD elements in nits",
+        .tooltip = "Sets the brightness of UI and HUD elements in nits (used when Tone Map Before UI is on)",
 
         .min = 48.f,
 
         .max = 500.f,
+
+    },
+
+    new renodx::utils::settings::Setting{
+
+        .key = "ToneMapBeforeUI",
+
+        .binding = &shader_injection.custom_tone_map_before_ui,
+
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+
+        .default_value = 1.f,
+
+        .label = "Tone Map Before UI",
+
+        .section = "Tone Mapping",
+
+        .tooltip = "Tone maps the 3D scene before Doom 3 draws its HUD and menus, so the UI is not tone mapped and uses UI Brightness.",
+
+        .labels = {"Off", "On"},
+
+        .is_enabled = []() { return IsCustomToneMapperEnabled(); },
 
     },
 
@@ -1530,11 +1553,11 @@ for (const auto old_format : scene_intermediate_formats) {
   renodx::mods::swapchain::Use(fdw_reason, &shader_injection);
 
   renodx::mods::shader::Use(fdw_reason, custom_shaders, &shader_injection);
-  doom3::opengl::Use(fdw_reason);
+  doom3::opengl::Use(fdw_reason, &shader_injection);
+  doom3::cursor::Use(fdw_reason);
 
 
 
   return TRUE;
 
 }
- 

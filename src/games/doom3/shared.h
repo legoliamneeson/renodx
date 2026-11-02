@@ -38,7 +38,8 @@
 
 // Must be 32-bit aligned.
 // PsychoV30 controls are appended so all pre-existing injected field offsets
-// remain stable. The Psycho block remains 8 floats, matching the old V24 size.
+// remain stable. The appended block remains 8 floats, matching the old V24 size;
+// its last two former padding slots now carry the pre-UI tone map state.
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;
@@ -85,8 +86,10 @@ struct ShaderInjectData {
   float psychov30_cone_response;
   float psychov30_purity_scale;
   float psychov30_source_boundary;
-  float psychov30_padding0;
-  float psychov30_padding1;
+
+  // Pre-UI tone map (OpenGL pass in opengl_framebuffer.hpp).
+  float custom_tone_map_before_ui;  // Setting: 1 = tone map the 3D scene before the GUI is drawn.
+  float custom_scene_tone_mapped;   // Per frame: 1 = frame is UI-relative and needs no tone map.
 };
 
 #ifndef __cplusplus
