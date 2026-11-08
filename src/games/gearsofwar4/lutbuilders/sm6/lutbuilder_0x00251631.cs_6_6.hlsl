@@ -218,7 +218,7 @@ void main(
   float _343 = mad((WorkingColorSpace.ToAP1[1].z), _325, mad((WorkingColorSpace.ToAP1[1].y), _322, ((WorkingColorSpace.ToAP1[1].x) * _319)));
   float _346 = mad((WorkingColorSpace.ToAP1[2].z), _325, mad((WorkingColorSpace.ToAP1[2].y), _322, ((WorkingColorSpace.ToAP1[2].x) * _319)));
   float _347 = dot(float3(_340, _343, _346), float3(0.2722287178039551f, 0.6740817427635193f, 0.053689517080783844f));
-  
+
   SetUngradedAP1(float3(_340, _343, _346));
 
   float _351 = (_340 / _347) + -1.0f;
@@ -360,7 +360,7 @@ void main(
   float _1089 = ((mad(-0.06537103652954102f, _1073, mad(1.451815478503704e-06f, _1072, (_1071 * 1.065374732017517f))) - _1071) * BlueCorrection) + _1071;
   float _1090 = ((mad(-0.20366770029067993f, _1073, mad(1.2036634683609009f, _1072, (_1071 * -2.57161445915699e-07f))) - _1072) * BlueCorrection) + _1072;
   float _1091 = ((mad(0.9999996423721313f, _1073, mad(2.0954757928848267e-08f, _1072, (_1071 * 1.862645149230957e-08f))) - _1073) * BlueCorrection) + _1073;
-  
+
   SetTonemappedAP1(_1089, _1090, _1091);
 
   float _1113 = max(0.0f, mad((WorkingColorSpace.FromAP1[0].z), _1091, mad((WorkingColorSpace.FromAP1[0].y), _1090, ((WorkingColorSpace.FromAP1[0].x) * _1089))));
@@ -372,7 +372,7 @@ void main(
   float _1164 = exp2(log2(max(0.0f, (lerp(_1141, OverlayColor.x, OverlayColor.w)))) * InverseGamma.y);
   float _1165 = exp2(log2(max(0.0f, (lerp(_1142, OverlayColor.y, OverlayColor.w)))) * InverseGamma.y);
   float _1166 = exp2(log2(max(0.0f, (lerp(_1143, OverlayColor.z, OverlayColor.w)))) * InverseGamma.y);
-  
+
   if (RENODX_TONE_MAP_TYPE != 0) {
     // return GenerateOutput(float3(_123, _456, _789));
     RWOutputTexture[int3((uint)(SV_DispatchThreadID.x), (uint)(SV_DispatchThreadID.y), (uint)(SV_DispatchThreadID.z))] = GenerateOutput(float3(_1164, _1165, _1166), OutputDevice);

@@ -1,3 +1,5 @@
+#include "./finite.hlsli"
+
 // ---- Created with 3Dmigoto v1.3.16 on Mon Jun 15 22:59:37 2026
 
 cbuffer VolumetricFogConstantscb : register(b2)
@@ -45,138 +47,21 @@ Texture3D<float4> InputTexture : register(t0);
 Texture2D<float4> InputTexture2D : register(t1);
 Texture2D<float> InputTextureDepth : register(t2);
 
-// 3Dmigoto declarations
-#define cmp -
+float4 main(float4 position : SV_Position0, float2 uv : TEXCOORD0) : SV_Target0 {
+  float depth = RogueFinite(InputTextureDepth.SampleLevel(pointSampler_s, uv, 0));
+  float2 linear_z = g_VolumetricFogConstants.m_LinearZConstants.xy;
+  float linear_depth = RogueFinite(linear_z.y) / RogueSafeDenominator(depth + RogueFinite(linear_z.x));
+  float fog_depth = saturate((linear_depth - RogueFinite(g_VolumetricFogConstants.m_StartDistance))
+      / RogueSafeDenominator(g_VolumetricFogConstants.m_Distance));
+  float3 volume_uv = float3(saturate(uv), pow(fog_depth, 0.833333313f))
+      * float3(0.993749976f, 0.98888886f, 0.984375f)
+      + float3(0.00312500005f, 0.00555555569f, 0.0078125f);
 
-#ifndef RENODX_NAN_FIX_EPSILON
-#define RENODX_NAN_FIX_EPSILON 1e-6
-#endif
-
-#ifndef RENODX_FLOAT_MAX
-#define RENODX_FLOAT_MAX 65504.0
-#endif
-
-float SafeFloat(float v)
-{
-  return (v == v && abs(v) < RENODX_FLOAT_MAX) ? v : 0.0;
-}
-
-float2 SafeFloat2(float2 v)
-{
-  return float2(
-    SafeFloat(v.x),
-    SafeFloat(v.y)
-  );
-}
-
-float3 SafeFloat3(float3 v)
-{
-  return float3(
-    SafeFloat(v.x),
-    SafeFloat(v.y),
-    SafeFloat(v.z)
-  );
-}
-
-float4 SafeFloat4(float4 v)
-{
-  return float4(
-    SafeFloat(v.x),
-    SafeFloat(v.y),
-    SafeFloat(v.z),
-    SafeFloat(v.w)
-  );
-}
-
-float SafePositive(float v)
-{
-  return max(SafeFloat(v), 0.0);
-}
-
-float3 SafePositive3(float3 v)
-{
-  v = SafeFloat3(v);
-  return max(v, 0.0.xxx);
-}
-
-float SafeDenom(float v)
-{
-  v = SafeFloat(v);
-  return max(abs(v), RENODX_NAN_FIX_EPSILON);
-}
-
-float SafeLog2Input(float v)
-{
-  return max(SafePositive(v), RENODX_NAN_FIX_EPSILON);
-}
-
-float3 SafeLog2Input3(float3 v)
-{
-  v = SafePositive3(v);
-  return max(v, RENODX_NAN_FIX_EPSILON.xxx);
-}
-
-float SafeExp2(float v)
-{
-  v = SafeFloat(v);
-  return SafeFloat(exp2(v));
-}
-
-float3 SafeExp2_3(float3 v)
-{
-  v = SafeFloat3(v);
-  return SafeFloat3(exp2(v));
-}
-
-void main(
-  float4 v0 : SV_Position0,
-  float2 v1 : TEXCOORD0,
-  out float4 o0 : SV_Target0)
-{
-  float4 r0, r1;
-  uint4 bitmask, uiDest;
-  float4 fDest;
-
-  r0.x = SafeFloat(InputTextureDepth.SampleLevel(pointSampler_s, v1.xy, 0).x);
-
-  r0.x = SafeFloat(g_VolumetricFogConstants.m_LinearZConstants.x) + r0.x;
-  r0.x = SafeFloat(g_VolumetricFogConstants.m_LinearZConstants.y) / SafeDenom(r0.x);
-  r0.x = -SafeFloat(g_VolumetricFogConstants.m_StartDistance) + r0.x;
-  r0.x = saturate(r0.x / SafeDenom(g_VolumetricFogConstants.m_Distance));
-
-  r0.x = log2(SafeLog2Input(r0.x));
-  r0.x = 0.833333313 * SafeFloat(r0.x);
-  r0.z = saturate(SafeExp2(r0.x));
-
-  r0.xy = saturate(SafeFloat2(v1.xy));
-
-  r0.xyz =
-    r0.xyz * float3(0.993749976, 0.98888886, 0.984375) +
-    float3(0.00312500005, 0.00555555569, 0.0078125);
-
-  r0.xyz = saturate(SafeFloat3(r0.xyz));
-
-  r0.xyzw = SafeFloat4(InputTexture.SampleLevel(linearSampler_s, r0.xyz, 0).xyzw);
-
-  r0.xyz = SafePositive3(r0.xyz);
-  r0.w = saturate(SafeFloat(g_VolumetricFogConstants.m_FogValue) * SafePositive(r0.w));
-
-  r1.xyz = SafePositive3(InputTexture2D.SampleLevel(pointSampler_s, v1.xy, 0).xyz);
-
-  r1.xyz = log2(SafeLog2Input3(r1.xyz));
-  r1.xyz = float3(2.20000005, 2.20000005, 2.20000005) * SafeFloat3(r1.xyz);
-  r1.xyz = SafePositive3(SafeExp2_3(r1.xyz));
-
-  r0.xyz = -r1.xyz + r0.xyz;
-  r0.xyz = r0.www * r0.xyz + r1.xyz;
-
-  r0.xyz = SafePositive3(r0.xyz);
-
-  r0.xyz = log2(SafeLog2Input3(r0.xyz));
-  r0.xyz = float3(0.454545468, 0.454545468, 0.454545468) * SafeFloat3(r0.xyz);
-
-  o0.xyz = SafePositive3(SafeExp2_3(r0.xyz));
-  o0.w = 1.0;
-
-  return;
+  float4 fog = InputTexture.SampleLevel(linearSampler_s, volume_uv, 0);
+  fog = RogueIsFinite(fog) ? fog : 0.f;
+  float weight = saturate(fog.a * RogueFinite(g_VolumetricFogConstants.m_FogValue));
+  float3 source = clamp(RogueFinite(InputTexture2D.SampleLevel(pointSampler_s, uv, 0).rgb), 0.f, ROGUE_FP16_MAX);
+  float3 scene = pow(source, 2.2f);
+  float3 combined = max(lerp(scene, fog.rgb, weight), 0.f);
+  return float4(min(pow(combined, 1.f / 2.2f), ROGUE_FP16_MAX), 1.f);
 }

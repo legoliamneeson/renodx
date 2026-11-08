@@ -311,7 +311,7 @@ void main(
   r1.z = dot(float3(1.9865448e-08, 2.12079581e-08, 0.999999583), r0.xyz);
   r1.xyz = r1.xyz + -r0.xyz;
   r0.xyz = cb0[36].zzz * r1.xyz + r0.xyz;
-  
+
   SetTonemappedAP1(r0.xyz);
 
   r1.x = dot(cb1[12].xyz, r0.xyz);

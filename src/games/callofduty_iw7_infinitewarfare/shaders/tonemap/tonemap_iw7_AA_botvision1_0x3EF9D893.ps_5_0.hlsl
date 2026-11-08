@@ -249,7 +249,7 @@ void main(
     }
   }
   r3.yz = cb2[3].wz + r0.yx;
-  r4.xy = cb2[2].xy * r3.zy;  
+  r4.xy = cb2[2].xy * r3.zy;
   r4.yz = (uint2)r4.xy;
   r4.x = (uint)r4.y >> 1;
   r4.w = 0;
@@ -279,7 +279,7 @@ void main(
   r2.x = saturate(dot(r6.xyz, cb2[6].xyz));
   r2.y = saturate(dot(r6.xyz, cb2[7].xyz));
   r2.z = saturate(dot(r6.xyz, cb2[8].xyz));
-  
+
   //to sRGB
   r2.xyz = renodx::color::srgb::EncodeSafe(r2.xyz);
   // r2.xyz = log2(r2.xyz);
@@ -446,7 +446,7 @@ void main(
     r0.xyz = r2.xyz + -r5.xyz;
     r5.xyz = r2.www * r0.xyz + r5.xyz;
   }
-  
+
   r5.w = dot(r5.xyz, float3(0.212599993,0.715200007,0.0722000003));
   o0.xyzw = r5.xyzw;
   o1.x = r5.w;

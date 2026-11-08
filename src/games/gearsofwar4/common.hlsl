@@ -1,4 +1,5 @@
 #include "./shared.h"
+#include "./prismTM.hlsl"
 
 // clang-format off
 static struct UELutBuilderConfig {
@@ -71,8 +72,59 @@ void SetGradedBT709(inout float3 color) {
   RENODX_UE_CONFIG.graded_bt709 *= sign(RENODX_UE_CONFIG.tonemapped_bt709);
 }
 
+// PsychoV30 and Prism are not ToneMapPass types, and ToneMapPass would apply only
+// the user grade for them. They map the linear graded signal to the true display
+// peak. Gamma correction stays after the tone map, in RenderIntermediatePass.
+float3 Gears4ToneMapPass(float3 color, renodx::draw::Config config) {
+  [branch]
+  if (config.tone_map_type != GEARS4_TONE_MAP_PSYCHOV30 && config.tone_map_type != GEARS4_TONE_MAP_PRISM) {
+    return renodx::draw::ToneMapPass(color, config);
+  }
+
+  // One shared grade, as in Gears Redux: both mappers receive the same signal.
+  color = renodx::color::grade::UserColorGrading(
+      color,
+      config.tone_map_exposure,
+      config.tone_map_highlights,
+      config.tone_map_shadows,
+      config.tone_map_contrast,
+      config.tone_map_saturation,
+      0.f,
+      0.f);
+
+  float peak = config.peak_white_nits / config.diffuse_white_nits;
+  [branch]
+  if (config.tone_map_type == GEARS4_TONE_MAP_PSYCHOV30) {
+    color = renodx::tonemap::psychov::psychotm_test30(
+        color, peak, 1.f, 1.f, 1.f, 1.f,
+        RENODX_PSYCHOV30_PURITY_SCALE, 1.f, 100.f, 1.f, 1.f, 0,
+        RENODX_PSYCHOV30_CONE_RESPONSE, 0.18f, 0.18f,
+        RENODX_PSYCHOV30_GAMUT_COMPRESSION,
+        RENODX_PSYCHOV30_GAMUT_TARGET >= 0.5f ? 1 : 0, 1.f,
+        RENODX_PSYCHOV30_COMPRESSION);
+  } else {
+    color = prism(color, peak);
+  }
+
+  [branch]
+  if (config.tone_map_blowout != 0.f || config.tone_map_highlight_saturation != 1.f) {
+    color = renodx::color::grade::config::ApplyUserColorGrading(
+        color,
+        renodx::color::grade::config::Create(
+            1.f, 1.f, 1.f, 1.f, 0.f, 1.f, config.tone_map_blowout,
+            0.f, 0.f, renodx::color::grade::config::hue_correction_type::INPUT,
+            1.f - config.tone_map_highlight_saturation));
+  }
+
+  // Prism's outset and the chroma controls can overshoot; scale RGB evenly so hue holds.
+  return color * min(1.f, peak / max(max(color.r, max(color.g, color.b)), 1e-6f));
+}
+
 float3 GenerateToneMap() {
-  return renodx::draw::ToneMapPass(RENODX_UE_CONFIG.untonemapped_bt709, RENODX_UE_CONFIG.graded_bt709);
+  renodx::draw::Config config = renodx::draw::BuildConfig();
+  return Gears4ToneMapPass(
+      renodx::draw::ComputeUntonemappedGraded(RENODX_UE_CONFIG.untonemapped_bt709, RENODX_UE_CONFIG.graded_bt709, config),
+      config);
 }
 
 float3 GenerateToneMap(float3 graded_bt709) {
@@ -105,7 +157,7 @@ float4 GenerateOutput(uint OutputDevice = 0u) {
   if (CUSTOM_LUT_OPTIMIZATION == 0.f) {
     config.gamma_correction = 0.f;
   } else {
-    color = renodx::draw::ToneMapPass(untonemapped_graded, config);
+    color = Gears4ToneMapPass(untonemapped_graded, config);
   }
 
   color = renodx::draw::RenderIntermediatePass(color, config);
@@ -145,7 +197,7 @@ void HandleLUTOutput(
     // config.tone_map_per_channel = 1.f;
     // config.tone_map_working_color_space = 2.f;
     // config.tone_map_hue_correction = 0.f;
-    tonemapped = renodx::draw::ToneMapPass(linear_color, config);
+    tonemapped = Gears4ToneMapPass(linear_color, config);
   } else {
     tonemapped = linear_color;
   }

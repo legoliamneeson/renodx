@@ -22,12 +22,14 @@
 
 #include "../../mods/shader.hpp"
 #include "../../mods/swapchain.hpp"
+#include "../../utils/bitwise.hpp"
 #include "../../utils/settings.hpp"
 #include "../../utils/swapchain.hpp"
+#include "./scene_hud.hpp"
 #include "./shared.h"
 
-#ifndef RENODX_PSYCHOV24_SLIDER_LAYOUT_VERSION
-#error "RESIDENTEVIL6: shared.h is outdated. Replace shared.h with the PsychoV24 slider version from the same package."
+#ifndef RENODX_PSYCHOV30_SLIDER_LAYOUT_VERSION
+#error "RESIDENTEVIL6: shared.h is outdated. Replace shared.h with the PsychoV30 slider version from the same package."
 #endif
 
 static_assert(
@@ -35,6 +37,47 @@ static_assert(
     "RE6 ShaderInjectData must remain exactly 40 floats / 160 bytes (c50-c59).");
 
 namespace {
+
+bool OnCreatePostProcessResource(
+    reshade::api::device* device,
+    reshade::api::resource_desc& desc,
+    reshade::api::subresource_data* initial_data,
+    reshade::api::resource_usage) {
+  constexpr auto usage = reshade::api::resource_usage::render_target
+                         | reshade::api::resource_usage::shader_resource;
+  if (device->get_api() != reshade::api::device_api::d3d9
+      || desc.type != reshade::api::resource_type::texture_2d
+      || desc.heap != reshade::api::memory_heap::gpu_only
+      || desc.texture.depth_or_layers != 1u
+      || desc.texture.format != reshade::api::format::b8g8r8a8_unorm
+      || desc.texture.levels != 1u || desc.texture.samples != 1u || initial_data != nullptr
+      || renodx::utils::bitwise::HasFlag(desc.flags, reshade::api::resource_flags::shared)
+      || !renodx::utils::bitwise::HasFlag(desc.usage, usage)) {
+    return false;
+  }
+
+  const bool is_color_lut = desc.texture.width == 1024u && desc.texture.height == 1u;
+  if (!is_color_lut) {
+    const auto back_buffer = renodx::utils::swapchain::GetBackBufferDesc(device);
+    if (back_buffer.type == reshade::api::resource_type::unknown) return false;
+
+    // RE6's bloom ping-pong targets form a quarter-size through 1/32-size pyramid.
+    bool is_bloom_target = false;
+    for (uint32_t divisor = 4; divisor <= 32; divisor *= 2) {
+      if (desc.texture.width == back_buffer.texture.width / divisor
+          && desc.texture.height == back_buffer.texture.height / divisor) {
+        is_bloom_target = true;
+        break;
+      }
+    }
+    if (!is_bloom_target) return false;
+  }
+
+  constexpr auto hdr_format = reshade::api::format::r16g16b16a16_float;
+  if (!device->check_format_support(hdr_format, usage)) return false;
+  desc.texture.format = hdr_format;
+  return true;
+}
 
 // -----------------------------------------------------------------------------
 // Resident Evil 6 display-mode crash fix
@@ -449,13 +492,14 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     __ALL_CUSTOM_SHADERS,
 };
 ShaderInjectData shader_injection;
+float* const scene_hud_split = &shader_injection.scene_hud_split;
 
 float current_settings_mode = 0.f;
 float force_windowed_borderless = 1.f;
 
 constexpr float TONE_MAP_TYPE_VANILLA = 0.f;
 constexpr float TONE_MAP_TYPE_RENODRT = 3.f;
-constexpr float TONE_MAP_TYPE_PSYCHOV24 = 24.f;
+constexpr float TONE_MAP_TYPE_PSYCHOV30 = 24.f;
 
 inline bool IsAdvancedMode() {
   return current_settings_mode >= 2.f;
@@ -473,8 +517,8 @@ inline bool IsRenoDRTEnabled() {
   return shader_injection.tone_map_type == TONE_MAP_TYPE_RENODRT;
 }
 
-inline bool IsPsychoV24Enabled() {
-  return shader_injection.tone_map_type == TONE_MAP_TYPE_PSYCHOV24;
+inline bool IsPsychoV30Enabled() {
+  return shader_injection.tone_map_type == TONE_MAP_TYPE_PSYCHOV30;
 }
 
 inline bool IsCustomToneMapperEnabled() {
@@ -553,11 +597,11 @@ renodx::utils::settings::Settings settings = {
         .can_reset = true,
         .label = "Tone Mapper",
         .section = "Grading",
-        .tooltip = "Vanilla keeps the original SDR final shader. RenoDRT uses RenoDX ToneMapPass. PsychoV24 calls psychotm_test24.",
-        .labels = {"Vanilla", "RenoDRT", "PsychoV24"},
+        .tooltip = "Vanilla keeps the original SDR final shader. RenoDRT uses RenoDX ToneMapPass. PsychoV30 calls psychotm_test30.",
+        .labels = {"Vanilla", "RenoDRT", "PsychoV30"},
         .parse = [](float value) {
           if (value == 1.f) return TONE_MAP_TYPE_RENODRT;
-          if (value == 2.f) return TONE_MAP_TYPE_PSYCHOV24;
+          if (value == 2.f) return TONE_MAP_TYPE_PSYCHOV30;
           return TONE_MAP_TYPE_VANILLA;
         },
     },
@@ -651,99 +695,84 @@ renodx::utils::settings::Settings settings = {
     },
 
     // ------------------------------------------------------------
-    // PsychoV24
+    // PsychoV30 uses the same saved keys for the four retained controls.
     // ------------------------------------------------------------
 
     new renodx::utils::settings::Setting{
         .key = "PsychoV24Compression",
-        .binding = &shader_injection.psychov24_compression,
+        .binding = &shader_injection.psychov30_compression,
         .default_value = 0.f,
-        .label = "PsychoV24 Compression",
+        .label = "PsychoV30 Compression",
         .section = "Grading",
-        .tooltip = "PsychoV24 shoulder/curve shape. 0 = auto. 50 = 1.00. 100 = 2.00. 200 = 4.00.",
+        .tooltip = "PsychoV30 shoulder/curve shape. 0 = auto. 50 = 1.00. 100 = 2.00. 200 = 4.00.",
         .min = 0.f,
         .max = 200.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
         .key = "PsychoV24ConeResponse",
-        .binding = &shader_injection.psychov24_cone_response,
+        .binding = &shader_injection.psychov30_cone_response,
         .default_value = 50.f,
-        .label = "PsychoV24 Cone Response",
+        .label = "PsychoV30 Cone Response",
         .section = "Grading",
-        .tooltip = "Scales PsychoV24 cone response. 50 = 1.00 neutral. Higher values increase the PsychoV24 contrast/purity response.",
+        .tooltip = "Scales PsychoV30 cone response. 50 = 1.00 neutral. Higher values increase the PsychoV30 contrast/purity response.",
         .min = 0.f,
         .max = 100.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
         .key = "PsychoV24GamutCompression",
-        .binding = &shader_injection.psychov24_gamut_compression,
+        .binding = &shader_injection.psychov30_gamut_compression,
         .default_value = 100.f,
-        .label = "PsychoV24 Gamut Compression",
+        .label = "PsychoV30 Gamut Compression",
         .section = "Grading",
-        .tooltip = "PsychoV24 LMS/MB gamut compression strength.",
+        .tooltip = "PsychoV30 gamut compression strength.",
         .min = 0.f,
         .max = 100.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .is_visible = []() { return IsAdvancedMode(); },
         .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
         .key = "PsychoV24GamutMode",
-        .binding = &shader_injection.psychov24_gamut_mode,
+        .binding = &shader_injection.psychov30_gamut_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "PsychoV24 Gamut Mode",
+        .label = "PsychoV30 Gamut Mode",
         .section = "Grading",
         .labels = {"BT.709", "BT.2020"},
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .is_visible = []() { return IsAdvancedMode(); },
     },
 
-    new renodx::utils::settings::Setting{
-        .key = "PsychoV24HighlightSaturation",
-        .binding = &shader_injection.psychov24_highlight_saturation,
-        .default_value = 100.f,
-        .label = "PsychoV24 Highlight Saturation",
-        .section = "Grading",
-        .tooltip = "Controls PsychoV24 highlight saturation inside Test24. 100% is neutral; lower values reduce highlight chroma and higher values increase it.",
-        .min = 0.f,
-        .max = 200.f,
-        .format = "%.0f%%",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
-        .is_visible = []() { return IsIntermediateMode(); },
-        .parse = [](float value) { return value * 0.01f; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "PsychoV24GamutHueRestore",
-        .binding = &shader_injection.psychov24_gamut_hue_restore,
-        .default_value = 0.f,
-        .label = "PsychoV24 Gamut Hue Restore",
-        .section = "Grading",
-        .tooltip = "Restores the pre-gamut hue direction after PsychoV24 gamut compression. 0% disables it; 100% applies full restoration.",
-        .min = 0.f,
-        .max = 100.f,
-        .format = "%.0f%%",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
-        .is_visible = []() { return IsAdvancedMode(); },
-        .parse = [](float value) { return value * 0.01f; },
-    },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeScene",
         .binding = &shader_injection.color_grade_strength,
         .default_value = 100.f,
         .label = "Scene Grading",
         .section = "Grading",
-        .tooltip = "Scene grading as applied by the game.",
+        .tooltip = "Strength of the game's original scene color matrix and LUT in HDR.",
         .max = 100.f,
         .is_enabled = []() { return IsCustomToneMapperEnabled(); },
         .parse = [](float value) { return value * 0.01f; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "MidtoneSeparation",
+        .binding = &shader_injection.midtone_separation,
+        .default_value = 50.f,
+        .label = "Midtone Separation",
+        .section = "Grading",
+        .tooltip = "Spreads nearby brightness levels around 18% gray. Requires scene grading.",
+        .min = 0.f,
+        .max = 100.f,
+        .is_enabled = []() { return IsCustomToneMapperEnabled() && shader_injection.color_grade_strength > 0.f; },
+        // An older add-on sends zero in this slot during live shader testing.
+        .parse = [](float value) { return 1.f + value * 0.005f; },
     },
     new renodx::utils::settings::Setting{
         .key = "ToneMapScaling",
@@ -957,7 +986,7 @@ renodx::utils::settings::Settings settings = {
     },
     new renodx::utils::settings::Setting{
         .value_type = renodx::utils::settings::SettingValueType::BUTTON,
-        .label = "PsychoV24",
+        .label = "PsychoV30",
         .section = "Options",
         .group = "button-line-1",
         .on_change = []() {
@@ -968,8 +997,6 @@ renodx::utils::settings::Settings settings = {
               {"PsychoV24ConeResponse", 60.f},
               {"PsychoV24GamutCompression", 100.f},
               {"PsychoV24GamutMode", 1.f},
-              {"PsychoV24HighlightSaturation", 100.f},
-              {"PsychoV24GamutHueRestore", 0.f},
               {"ColorGradeHighlights", 50.f},
               {"ColorGradeShadows", 50.f},
               {"ColorGradeContrast", 50.f},
@@ -1040,9 +1067,8 @@ void OnPresetOff() {
       {"PsychoV24ConeResponse", 50.f},
       {"PsychoV24GamutCompression", 100.f},
       {"PsychoV24GamutMode", 1.f},
-      {"PsychoV24HighlightSaturation", 100.f},
-      {"PsychoV24GamutHueRestore", 0.f},
       {"ColorGradeScene", 100.f},
+      {"MidtoneSeparation", 0.f},
   });
 }
 
@@ -1134,7 +1160,7 @@ bool initialized = false;
 }  // namespace
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX";
-extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX (Generic)";
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX for Resident Evil 6";
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   switch (fdw_reason) {
@@ -1154,8 +1180,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;
         renodx::mods::shader::allow_multiple_push_constants = true;
-         renodx::mods::shader::constant_buffer_offset = 50 * 4; 
-        renodx::mods::swapchain::set_color_space = false; 
+         renodx::mods::shader::constant_buffer_offset = 50 * 4;
+        renodx::mods::swapchain::set_color_space = false;
         renodx::mods::swapchain::use_device_proxy = true;
         renodx::mods::swapchain::use_resource_cloning = true;
         renodx::mods::swapchain::swap_chain_proxy_shaders = {
@@ -1178,6 +1204,27 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         // Always register present so the Windowed Borderless helper can run even if
         // the display proxy is disabled.
         reshade::register_event<reshade::addon_event::present>(OnPresent);
+        reshade::register_event<reshade::addon_event::create_resource>(OnCreatePostProcessResource);
+
+        reshade::register_event<reshade::addon_event::init_device>(re6_scene_hud::OnInitDevice);
+        reshade::register_event<reshade::addon_event::destroy_device>(re6_scene_hud::OnDestroyDevice);
+        reshade::register_event<reshade::addon_event::destroy_command_list>(re6_scene_hud::OnResetCommandList);
+        reshade::register_event<reshade::addon_event::present>(re6_scene_hud::OnPresent);
+        reshade::register_event<reshade::addon_event::copy_resource>(re6_scene_hud::OnCopyResource);
+        reshade::register_event<reshade::addon_event::copy_texture_region>(re6_scene_hud::OnCopyTexture);
+        reshade::register_event<reshade::addon_event::clear_render_target_view>(re6_scene_hud::OnClearTarget);
+        renodx::utils::command_action::Register(
+            re6_scene_hud::COVERAGE_ACTION,
+            {.command_types = renodx::utils::command_action::COMMAND_TYPE_DIRECT_DRAW});
+        custom_shaders.at(0x69A8F7C1u).on_drawn = [](reshade::api::command_list* cmd) {
+          if (IsCustomToneMapperEnabled() && shader_injection.peak_white_nits > shader_injection.diffuse_white_nits) {
+            re6_scene_hud::CaptureScene(cmd);
+          }
+        };
+        renodx::utils::command_action::Register(
+            re6_scene_hud::GAMMA_ACTION,
+            {.shader_hash = 0x2BA7B029u, .command_types = renodx::utils::command_action::COMMAND_TYPE_DRAW},
+            &scene_hud_split);
 
         {
           auto* setting = new renodx::utils::settings::Setting{
@@ -1361,17 +1408,17 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
      renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::r8g8b8a8_unorm,
     .new_format = reshade::api::format::r16g16b16a16_float,
-    
+
 });
 renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::r8g8b8a8_typeless,
     .new_format = reshade::api::format::r16g16b16a16_float,
-    
+
 });
 renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::r8g8b8a8_unorm_srgb,
     .new_format = reshade::api::format::r16g16b16a16_float,
-    
+
 });
 /* renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::b8g8r8a8_unorm,
@@ -1379,28 +1426,38 @@ renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .dimensions = {.width = 960, .height = 540},
 
     .usage_include = reshade::api::resource_usage::render_target,
-   
+
 }); */
 
 renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::b8g8r8a8_unorm,
     .new_format = reshade::api::format::r16g16b16a16_float,
-   
+
 });
 renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::r10g10b10a2_unorm,
     .new_format = reshade::api::format::r16g16b16a16_float,
-    
+
 });
 renodx::mods::swapchain::resource_upgrade_infos.push_back({
     .old_format = reshade::api::format::b10g10r10a2_unorm,
     .new_format = reshade::api::format::r16g16b16a16_float,
-    
+
 });
       break;
     case DLL_PROCESS_DETACH:
       RE6RemoveCrashFixHooks();
       reshade::unregister_event<reshade::addon_event::present>(OnPresent);
+      reshade::unregister_event<reshade::addon_event::create_resource>(OnCreatePostProcessResource);
+      renodx::utils::command_action::Unregister(re6_scene_hud::GAMMA_ACTION);
+      renodx::utils::command_action::Unregister(re6_scene_hud::COVERAGE_ACTION);
+      reshade::unregister_event<reshade::addon_event::clear_render_target_view>(re6_scene_hud::OnClearTarget);
+      reshade::unregister_event<reshade::addon_event::copy_texture_region>(re6_scene_hud::OnCopyTexture);
+      reshade::unregister_event<reshade::addon_event::copy_resource>(re6_scene_hud::OnCopyResource);
+      reshade::unregister_event<reshade::addon_event::present>(re6_scene_hud::OnPresent);
+      reshade::unregister_event<reshade::addon_event::destroy_command_list>(re6_scene_hud::OnResetCommandList);
+      reshade::unregister_event<reshade::addon_event::destroy_device>(re6_scene_hud::OnDestroyDevice);
+      reshade::unregister_event<reshade::addon_event::init_device>(re6_scene_hud::OnInitDevice);
       reshade::unregister_addon(h_module);
       break;
   }

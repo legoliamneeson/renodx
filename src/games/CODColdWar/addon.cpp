@@ -195,11 +195,11 @@ renodx::utils::settings::Settings settings = {
           return true;
 
         },
-        
+
         .is_visible = []() {
           return false;
         },
-       
+
     },
 
 
@@ -224,7 +224,7 @@ renodx::utils::settings::Settings settings = {
             "Per Channel",
         },
 
-      
+
 
         .is_visible = []() {
           return current_settings_mode >= 2.f;

@@ -38,7 +38,7 @@ void main(
   float4 fDest;
 
   float3 colorUntonemapped;
-  
+
   //bloom
   r0.xy = max(cb2[29].xy, v1.xy);
   r0.xy = min(cb2[29].zw, r0.xy);

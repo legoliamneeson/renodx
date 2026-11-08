@@ -69,7 +69,7 @@ void main(
   r0.x = dot(r1.xyz, float3(0.272228718, 0.674081743, 0.0536895171));
 
   SetUngradedAP1(r1.xyz);
-   
+
   r0.yzw = r1.xyz / r0.xxx;
   r0.yzw = float3(-1, -1, -1) + r0.yzw;
   r0.y = dot(r0.yzw, r0.yzw);
@@ -174,7 +174,7 @@ void main(
   r0.xyz = r2.xyz * r3.yyy + r0.xyz;
 
   SetUntonemappedAP1(r0.xyz);
-   
+
       r1.x = dot(float3(1.70505154, -0.621790707, -0.0832583979), r0.xyz);
   r1.y = dot(float3(-0.130257145, 1.14080286, -0.0105485283), r0.xyz);
   r1.z = dot(float3(-0.0240032747, -0.128968775, 1.15297174), r0.xyz);
@@ -432,10 +432,10 @@ void main(
     o0 = GenerateOutput(r3.xyz, asuint(cb0[65].z));
     return;
   }
-  
+
   [branch]
 
-  
+
   if (asuint(cb0[65].z) == 0) {
     r4.xyz = float3(12.9200001, 12.9200001, 12.9200001) * r3.xyz;
     r5.xyz = cmp(r3.xyz >= float3(0.00313066994, 0.00313066994, 0.00313066994));

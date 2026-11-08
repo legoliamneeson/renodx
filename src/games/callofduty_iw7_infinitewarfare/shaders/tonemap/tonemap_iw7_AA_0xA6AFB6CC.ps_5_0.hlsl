@@ -60,7 +60,7 @@ void main(
   r0.xz = r1.xy * r0.zz + r1.zw;
   r0.yw = r3.xy * r0.yy + r3.zw;
   r2.yz = saturate(r0.yx / r0.wz);
-  
+
   //color correct (h2)
   r0.x = saturate(dot(r2.xyz, cb2[1].xyz));
   r0.y = saturate(dot(r2.xyz, cb2[2].xyz));

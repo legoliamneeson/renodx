@@ -94,6 +94,41 @@ UI Brightness scales UI composited after the scene pass. HUD/UI already baked
 into the captured scene cannot be independently scaled by this implementation.
 Menu, HUD, loading screen and video coverage remain to be checked.
 
+The post-scene HUD shader `0xDF37C319.ps_4_0.hlsl` restores the original
+UNORM RGB bound before writing to the floating-point HDR target. Its Gamma=1
+path previously returned the unbounded texture/color product. UI values above
+white could therefore be amplified by the output proxy's gamma decode. The
+replacement caps RGB at 0..1, leaves alpha unchanged, and lets the existing
+proxy apply UI Brightness. It does not cap the scene at UI white.
+
+On 2026-11-02, DevKit confirmed this shader drawing after the scene motion-blur
+pass directly into the FP16 swapchain clone. The replacement compiled and was
+live-loaded. A focused D3D11 WARP render check passed 36 cases / 73,728 component
+checks across gamma, component replication and color/alpha inputs. Original UI
+output reached 15.2917; corrected RGB stayed within 0..1. Normal-range RGB and
+alpha were preserved exactly. This main-HUD clamp alone did not resolve the
+reported flash; the reload material below uses a separate shader.
+
+The reload-bar flare uses `0xECF8AA5E.ps_4_0.hlsl`. A subsequent capture found
+it alpha-blending directly into the FP16 swapchain clone after scene mapping
+and between the main HUD draws. The pre-proxy composite contained a peak RGB
+value of 8.3984375 in the upper-right HUD area. At the saved 203-nit UI white,
+gamma-2.2 decoding would represent about 21,915 nits before any final output
+peak limit. Its material color and fog calculation had no output bound.
+
+The replacement saturates this material's final RGBA, containing both color
+and blend-factor overshoot while preserving normal-range material values.
+It compiled and was activated through DevKit. Subsequent HUD-region readbacks
+were below 1 (maximum 0.9350586), with scene highlights elsewhere above 1;
+these live captures are not frozen-frame comparisons. The user reproduced
+the reload flash after activation and confirmed it was fixed.
+
+Rebuild target `gearsofwarredux` after closing the game to embed both added UI
+replacements, bringing the registration count to six. Inspect generated
+`build/gearsofwarredux.include/embed/0xDF37C319.h` and `0xECF8AA5E.h`. After
+restarting, check reload flashes, HUD, damage, notifications, menus, fades and
+transparent UI, including unequal Game/UI brightness and both output modes.
+
 ## DevKit findings — 2026-10-04
 
 Observed binary:

@@ -1,9 +1,9 @@
 !!ARBvp1.0 OPTION ARB_position_invariant ;
 
 # VPROG_INTERACTION
-# 
+#
 # input:
-# 
+#
 # attrib[8] TEX0	texture coordinates
 # attrib[9] TEX1	normal
 # attrib[10] TEX2	tangent[0]
@@ -24,9 +24,9 @@
 # c[15]	specularMatrix T
 # c[16]	vertex color modulate
 # c[17]	vertex color add
-# 
+#
 # output:
-# 
+#
 # texture 0 is the cube map
 # texture 1 is the per-surface bump map
 # texture 2 is the light falloff texture
@@ -105,7 +105,7 @@ END
 
 #======================================================================
 
-!!ARBfp1.0 
+!!ARBfp1.0
 OPTION ARB_precision_hint_fastest;
 
 # nodhewm3gammahack -- custom gamma tail preserves HDR range
@@ -215,4 +215,3 @@ POW result.color.y, renodxResult.y, program.env[21].w;
 POW result.color.z, renodxResult.z, program.env[21].w;
 MOV result.color.w, renodxResult.w;
 END
-

@@ -2,7 +2,7 @@
 
 
 float3 colorUntonemapped, colorTonemapped;
-  
+
 
 colorUntonemapped = .xyz * Tonemap_CalculatePreExposureMultiplier(cb13[0].xyz, cb13[1].xyz, cb13[2].xyz);
 

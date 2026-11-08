@@ -52,8 +52,12 @@ renodx::utils::settings::Settings settings = {
         .label = "Tone Mapper",
         .section = "Tone Mapping",
         .tooltip = "Sets the tone mapper type",
-        .labels = {"Vanilla", "RenoDRT"},
-        .parse = [](float value) { return value * 3.f; },
+        .labels = {"Vanilla", "RenoDRT", "PsychoV30", "PrismTM"},
+        .parse = [](float value) {
+          if (value < 1.5f) return value * 3.f;
+          if (value < 2.5f) return GEARS4_TONE_MAP_PSYCHOV30;
+          return GEARS4_TONE_MAP_PRISM;
+        },
         .is_visible = []() { return current_settings_mode >= 1; },
     },
     new renodx::utils::settings::Setting{
@@ -107,7 +111,7 @@ renodx::utils::settings::Settings settings = {
         .section = "Tone Mapping",
         .tooltip = "Selects hue processor",
         .labels = {"OKLab", "ICtCp", "darkTable UCS"},
-        .is_enabled = []() { return shader_injection.tone_map_type >= 1; },
+        .is_enabled = []() { return shader_injection.tone_map_type == 3; },
         .is_visible = []() { return current_settings_mode >= 2; },
     },
     new renodx::utils::settings::Setting{
@@ -287,6 +291,61 @@ renodx::utils::settings::Settings settings = {
             "JPN CRT",
         },
         .is_visible = []() { return settings[0]->GetValue() >= 1; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30Purity",
+        .binding = &shader_injection.psychov30_purity_scale,
+        .default_value = 100.f,
+        .label = "Purity",
+        .section = "PsychoV30",
+        .tooltip = "Scales color purity relative to adaptation.",
+        .max = 200.f,
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1 && shader_injection.tone_map_type == GEARS4_TONE_MAP_PSYCHOV30; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30ConeResponse",
+        .binding = &shader_injection.psychov30_cone_response,
+        .default_value = 1.f,
+        .label = "Cone Response",
+        .section = "PsychoV30",
+        .tooltip = "Sets the cone response exponent around mid gray.",
+        .min = 0.1f,
+        .max = 2.f,
+        .format = "%.2f",
+        .is_visible = []() { return current_settings_mode >= 1 && shader_injection.tone_map_type == GEARS4_TONE_MAP_PSYCHOV30; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30GamutCompression",
+        .binding = &shader_injection.psychov30_gamut_compression,
+        .default_value = 100.f,
+        .label = "Gamut Compression",
+        .section = "PsychoV30",
+        .tooltip = "Sets how strongly out-of-gamut colors are projected into the gamut target.",
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1 && shader_injection.tone_map_type == GEARS4_TONE_MAP_PSYCHOV30; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30GamutTarget",
+        .binding = &shader_injection.psychov30_gamut_target,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Gamut Target",
+        .section = "PsychoV30",
+        .tooltip = "Selects the gamut that gamut compression targets.",
+        .labels = {"BT.709", "BT.2020"},
+        .is_visible = []() { return current_settings_mode >= 1 && shader_injection.tone_map_type == GEARS4_TONE_MAP_PSYCHOV30; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30Compression",
+        .binding = &shader_injection.psychov30_compression,
+        .default_value = 0.f,
+        .label = "Compression",
+        .section = "PsychoV30",
+        .tooltip = "Sets the highlight compression power. Zero selects it automatically from Peak Brightness.",
+        .max = 4.f,
+        .format = "%.2f",
+        .is_visible = []() { return current_settings_mode >= 1 && shader_injection.tone_map_type == GEARS4_TONE_MAP_PSYCHOV30; },
     },
 };
 
@@ -626,7 +685,7 @@ const std::unordered_map<
         {
             "Borderlands3.exe",
             {
-              {"Upgrade_CopyDestinations", 1.f},  
+              {"Upgrade_CopyDestinations", 1.f},
               {"Upgrade_R8G8B8A8_TYPELESS", UPGRADE_TYPE_OUTPUT_RATIO},
               {"Upgrade_B8G8R8A8_TYPELESS", UPGRADE_TYPE_OUTPUT_RATIO},
               {"Upgrade_R11G11B10_FLOAT", UPGRADE_TYPE_OUTPUT_RATIO},

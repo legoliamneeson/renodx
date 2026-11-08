@@ -308,3 +308,57 @@ float3 CustomGradingEnd(float3 ungraded_color, float3 sdr_color, float3 graded_c
       max(graded_color, 0.0f),
       CUSTOM_GRADING_STRENGTH);
 }
+
+bool IsCustomHDRMode() {
+  // Type 24 is accepted while testing live shaders with the previous addon.
+  return RENODX_TONE_MAP_TYPE == 3.f || RENODX_TONE_MAP_TYPE == 30.f || RENODX_TONE_MAP_TYPE == 24.f;
+}
+
+float GetWorkingPeak(float peak) {
+  if (RENODX_GAMMA_CORRECTION == 1.f) {
+    return renodx::color::correct::GammaSafe(peak, true, 2.2f);
+  }
+  if (RENODX_GAMMA_CORRECTION == 2.f) {
+    return renodx::color::correct::GammaSafe(peak, true, 2.4f);
+  }
+  return peak;
+}
+
+// Original fitted ACES neutral curve at V(x)=0.18:
+// x=0.26314668, V'(x)=0.90388522, logarithmic slope x*V'(x)/V(x)=1.3214133.
+static const float ACES_ANCHOR_IN = 0.26314668f;
+static const float ACES_ANCHOR_OUT = 0.18f;
+static const float ACES_ANCHOR_CONE = 1.3214133f;
+
+float3 MapSceneToDisplay(float3 scene, float peak, float type = -1.f) {
+  if (type < 0.f) type = RENODX_TONE_MAP_TYPE;
+  peak = GetWorkingPeak(peak);
+  if (type == 30.f || type == 24.f) {
+    return renodx::tonemap::psychov::psychotm_test30(
+        scene, peak, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 100.f, 1.f, 1.f, 0,
+        ACES_ANCHOR_CONE * max(RENODX_PSYCHOV30_CONE_RESPONSE, 0.01f),
+        ACES_ANCHOR_IN.xxx, ACES_ANCHOR_OUT.xxx,
+        RENODX_PSYCHOV30_GAMUT_COMPRESSION,
+        RENODX_PSYCHOV30_GAMUT_MODE > 0.5f ? 1 : 0,
+        1.f, RENODX_PSYCHOV30_COMPRESSION);
+  }
+  float clip = max(100.f, peak);
+  float below = renodx::tonemap::ReinhardScalableExtended(ACES_ANCHOR_IN * 0.999f, clip, peak, 0.f, ACES_ANCHOR_IN, ACES_ANCHOR_OUT);
+  float above = renodx::tonemap::ReinhardScalableExtended(ACES_ANCHOR_IN * 1.001f, clip, peak, 0.f, ACES_ANCHOR_IN, ACES_ANCHOR_OUT);
+  float elasticity = (above - below) / (0.002f * ACES_ANCHOR_OUT);
+  renodx::tonemap::renodrt::Config config = renodx::tonemap::renodrt::config::Create();
+  config.nits_peak = peak * 100.f;
+  config.mid_gray_value = ACES_ANCHOR_IN;
+  config.mid_gray_nits = ACES_ANCHOR_OUT * 100.f;
+  config.contrast = ACES_ANCHOR_CONE / max(elasticity, 0.000001f);
+  config.saturation = 1.f;
+  config.dechroma = 0.f;
+  config.hue_correction_strength = 0.f;
+  config.tone_map_method = renodx::tonemap::renodrt::config::tone_map_method::REINHARD;
+  config.working_color_space = RENODX_TONE_MAP_WORKING_COLOR_SPACE;
+  config.per_channel = RENODX_TONE_MAP_PER_CHANNEL == 1.f;
+  config.clamp_color_space = -1.f;
+  config.clamp_peak = -1.f;
+  config.white_clip = clip;
+  return renodx::tonemap::renodrt::BT709(scene, config);
+}

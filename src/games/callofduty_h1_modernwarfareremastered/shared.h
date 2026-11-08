@@ -76,7 +76,7 @@ struct ShaderInjectData {
   float custom_preexposure_offset_multiplier;
   // float custom_preexposure_auto_mode;
   float custom_preexposure_auto_multiplier;
-  
+
   // float custom_mov_shoulderpow;
 
   // float custom_upgradetonemap_auto;

@@ -61,7 +61,7 @@ void main(
 
   //colorTonemapped
   colorTonemapped = r0.xyz;
-  
+
   //r0.w
   r0.w = dot(r0.xyz, float3(0.298999995,0.587000012,0.114));
 
@@ -71,7 +71,7 @@ void main(
     r0.w = saturate(r0.w);
     r1.yzw = r0.www + -r0.xyz;
     r0.xyz = r1.xxx * r1.yzw + r0.xyz;
-    
+
     r1.xyz = cb2[2].xyz * r0.www + cb2[1].xyz;
     r1.xyz = r1.xyz * r0.www + cb2[0].xyz;
     r0.xyz = r0.xyz * r1.xyz + cb2[3].xyz;

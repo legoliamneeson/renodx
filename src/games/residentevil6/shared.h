@@ -1,19 +1,18 @@
 #ifndef SRC_RESIDENTEVIL6_SHARED_H_
 #define SRC_RESIDENTEVIL6_SHARED_H_
 
-#define RENODX_PSYCHOV24_SLIDER_LAYOUT_VERSION 1
+#define RENODX_PSYCHOV30_SLIDER_LAYOUT_VERSION 1
 
 
-// Tone mapper IDs used by Addon.cpp and HLSL.
+// Preserve the injected Psycho preset ID for compatibility with the existing addon.
 #define RENODX_TONE_MAP_TYPE_VANILLA   0.f
 #define RENODX_TONE_MAP_TYPE_RENODRT   3.f
-#define RENODX_TONE_MAP_TYPE_PSYCHOV24 24.f
+#define RENODX_TONE_MAP_TYPE_PSYCHOV30 24.f
 
 
 // Must be 32-bit aligned.
 // Keep the original first 32 float layout stable for the DX9/ps_3_0 c50-c57 path.
-// PsychoV24 stays inside the known-good V22-sized c50-c59 layout.
-// Test24-specific controls reuse the previously unused c59.y/c59.z slots.
+// PsychoV30 stays inside the known-good V22-sized c50-c59 layout.
 struct ShaderInjectData {
   float peak_white_nits;
   float diffuse_white_nits;
@@ -71,20 +70,20 @@ struct ShaderInjectData {
   float custom_flip_uv_y;
 
 
-  // PsychoV24 controls.
+  // PsychoV30 controls.
   // These stay at the same positions used by the previous Psycho build.
-  float psychov24_compression;
-  float psychov24_gamut_compression;
-  float psychov24_gamut_mode;
+  float psychov30_compression;
+  float psychov30_gamut_compression;
+  float psychov30_gamut_mode;
 
 
   // c59
   // Reuse the padding slots from the working PsychoV22 layout so the
   // complete injection payload remains exactly 40 floats / 160 bytes.
-  float psychov24_cone_response;          // x
-  float psychov24_highlight_saturation;   // y
-  float psychov24_gamut_hue_restore;      // z
-  float padding5;                         // w
+  float psychov30_cone_response;  // x
+  float scene_hud_split;          // y
+  float psycho_reserved_z;        // z
+  float midtone_separation;      // w
 };
 
 
@@ -96,8 +95,8 @@ struct ShaderInjectData {
 
 // DX9/SM3 path.
 // c50-c57 preserve the original layout.
-// c58 contains custom_flip_uv_y plus the first PsychoV24 controls.
-// c59 contains cone response plus Highlight Saturation and Gamut Hue Restore.
+// c58 contains custom_flip_uv_y plus the first PsychoV30 controls.
+// c59.x contains cone response and c59.w contains midtone separation.
 // Keep this at 10 float4 registers to match the known-working V22 ABI.
 float4 shader_injection[10] : register(c50);
 
@@ -149,14 +148,14 @@ float4 shader_injection[10] : register(c50);
 
 
 #define RENODX_CUSTOM_FLIP_UV_Y                shader_injection[8][0]
-#define RENODX_PSYCHOV24_COMPRESSION           shader_injection[8][1]
-#define RENODX_PSYCHOV24_GAMUT_COMPRESSION     shader_injection[8][2]
-#define RENODX_PSYCHOV24_GAMUT_MODE            shader_injection[8][3]
+#define RENODX_PSYCHOV30_COMPRESSION           shader_injection[8][1]
+#define RENODX_PSYCHOV30_GAMUT_COMPRESSION     shader_injection[8][2]
+#define RENODX_PSYCHOV30_GAMUT_MODE            shader_injection[8][3]
 
-#define RENODX_PSYCHOV24_CONE_RESPONSE         shader_injection[9][0]
+#define RENODX_PSYCHOV30_CONE_RESPONSE         shader_injection[9][0]
+#define RENODX_SCENE_HUD_SPLIT                 shader_injection[9][1]
+#define RENODX_MIDTONE_SEPARATION              shader_injection[9][3]
 
-#define RENODX_PSYCHOV24_HIGHLIGHT_SATURATION shader_injection[9][1]
-#define RENODX_PSYCHOV24_GAMUT_HUE_RESTORE    shader_injection[9][2]
 
 
 #else
@@ -223,12 +222,11 @@ cbuffer shader_injection : register(b13) {
 
 
 #define RENODX_CUSTOM_FLIP_UV_Y                shader_injection.custom_flip_uv_y
-#define RENODX_PSYCHOV24_COMPRESSION           shader_injection.psychov24_compression
-#define RENODX_PSYCHOV24_GAMUT_COMPRESSION     shader_injection.psychov24_gamut_compression
-#define RENODX_PSYCHOV24_GAMUT_MODE            shader_injection.psychov24_gamut_mode
-#define RENODX_PSYCHOV24_CONE_RESPONSE         shader_injection.psychov24_cone_response
-#define RENODX_PSYCHOV24_HIGHLIGHT_SATURATION shader_injection.psychov24_highlight_saturation
-#define RENODX_PSYCHOV24_GAMUT_HUE_RESTORE    shader_injection.psychov24_gamut_hue_restore
+#define RENODX_PSYCHOV30_COMPRESSION           shader_injection.psychov30_compression
+#define RENODX_PSYCHOV30_GAMUT_COMPRESSION     shader_injection.psychov30_gamut_compression
+#define RENODX_PSYCHOV30_GAMUT_MODE            shader_injection.psychov30_gamut_mode
+#define RENODX_PSYCHOV30_CONE_RESPONSE         shader_injection.psychov30_cone_response
+#define RENODX_MIDTONE_SEPARATION              shader_injection.midtone_separation
 
 
 #endif

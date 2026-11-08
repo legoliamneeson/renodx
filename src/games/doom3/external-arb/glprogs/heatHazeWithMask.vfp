@@ -2,14 +2,14 @@
 !!ARBvp1.0 OPTION ARB_position_invariant ;
 
 # input:
-# 
+#
 # texcoord[0] TEX0	texcoords
 #
 # local[0]	scroll
 # local[1]	deform magnitude (1.0 is reasonable, 2.0 is twice as wavy, 0.5 is half as wavy, etc)
 #
 # output:
-# 
+#
 # texture 0 is _currentRender
 # texture 1 is a normal map that we will use to deform texture 0
 #
@@ -49,7 +49,7 @@ END
 
 #======================================================================
 
-!!ARBfp1.0 
+!!ARBfp1.0
 OPTION ARB_precision_hint_fastest;
 
 # nodhewm3gammahack -- custom gamma tail preserves HDR range
@@ -99,4 +99,3 @@ POW result.color.y, renodxResult.y, program.env[21].w;
 POW result.color.z, renodxResult.z, program.env[21].w;
 MOV result.color.w, renodxResult.w;
 END
-

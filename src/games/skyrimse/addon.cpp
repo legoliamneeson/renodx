@@ -717,7 +717,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         // Upgrade only render-target resources and keep resource-view cloning
         // enabled so clears, RTVs and SRV variants continue to reference the same
         // upgraded resource.
-       
+
         const reshade::api::format scene_intermediate_formats[] = {
     reshade::api::format::r8g8b8a8_unorm,
     reshade::api::format::r8g8b8a8_typeless,
@@ -748,7 +748,7 @@ for (const auto old_format : scene_intermediate_formats) {
     });
   }
 }
-      
+
 
         initialized = true;
       }

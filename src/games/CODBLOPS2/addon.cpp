@@ -753,10 +753,10 @@ for (const auto old_format : scene_intermediate_formats) {
     });
   }
 }
-      
+
         initialized = true;
       }
-     
+
       break;
     case DLL_PROCESS_DETACH:
       reshade::unregister_event<reshade::addon_event::present>(OnPresent);

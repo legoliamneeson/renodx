@@ -79,17 +79,17 @@ void main(
   {
     float3 inputSDRGamma = saturate(inputGamma);
 
-    float3 inputLinear = renodx::color::gamma::DecodeSafe(inputSDRGamma);
+    float3 inputLinear = renodx::color::srgb::DecodeSafe(inputSDRGamma);
     float3 fogSDRLinear = saturate(fogLinear);
 
     float3 outputLinear = saturate(lerp(inputLinear, fogSDRLinear, fogAmount));
 
-    o0.xyz = renodx::color::gamma::EncodeSafe(outputLinear);
+    o0.xyz = renodx::color::srgb::EncodeSafe(outputLinear);
     o0.w = 1.0f;
     return;
   }
 
-  float3 inputLinearHDR = renodx::color::gamma::DecodeSafe(max(inputGamma, 0.0f));
+  float3 inputLinearHDR = renodx::color::srgb::DecodeSafe(max(inputGamma, 0.0f));
   float3 fogLinearHDR = max(fogLinear, 0.0f);
 
   float3 outputLinearHDR = ApplyFogCompositeLinear(
@@ -98,7 +98,7 @@ void main(
     fogAmount
   );
 
-  o0.xyz = renodx::color::gamma::EncodeSafe(max(outputLinearHDR, 0.0f));
+  o0.xyz = renodx::color::srgb::EncodeSafe(max(outputLinearHDR, 0.0f));
   o0.w = 1.0f;
   return;
 }

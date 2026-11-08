@@ -156,12 +156,12 @@ void main(
     r0.w = r0.w * 0.00390625 + -0.001953125;
     r1.xyw = r0.xyz * float3(1.04999995,1.04999995,1.04999995) + r0.www;
   }
-  
+
   //r0.xyz = log2(r1.xyw);
   //r0.xyz = cb0[50].www * r0.xyz;
   //o0.xyz = exp2(r0.xyz);
 
   o0.rgb = renodx::math::SignPow(r1.xyw, cb0[50].w);
-  
+
   return;
 }

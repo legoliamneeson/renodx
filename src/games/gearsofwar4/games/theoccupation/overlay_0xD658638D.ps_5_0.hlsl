@@ -59,7 +59,7 @@ void main(
   r0.w = cb1[3].y * r0.w;
   r0.w = exp2(r0.w);
   r0.zw = min(float2(1,1), r0.zw);
-  r1.xyz = t3.Sample(s3_s, r0.xy).xyz;  
+  r1.xyz = t3.Sample(s3_s, r0.xy).xyz;
   r2.xyz = r1.xyz * r0.www + -r1.xyz;
   r2.xyz = cb1[3].zzz * r2.xyz + r1.xyz;
   r3.xyz = r1.xyz * r0.zzz + -r1.xyz;
@@ -68,19 +68,19 @@ void main(
   r1.xyz = cb1[3].www * r2.xyz + r1.xyz;
   r2.xyz = t2.Sample(s2_s, r0.xy).xyz;
   r2.xyz = r1.xyz * r2.xyz + -r1.xyz;
-  
+
   //r1.xyz = saturate(cb1[4].xxx * r2.xyz + r1.xyz);
   r1.xyz = (cb1[4].xxx * r2.xyz + r1.xyz);
-  
-  r2.xyz = t1.Sample(s1_s, r0.xy).xyz; 
+
+  r2.xyz = t1.Sample(s1_s, r0.xy).xyz;
   r0.xyz = t0.Sample(s0_s, r0.xy).xyz;
   r2.xyz = r2.xyz + -r0.xyz;
   r0.xyz = cb1[2].xxx * r2.xyz + r0.xyz;
   r0.xyz = r0.xyz * r1.xyz + cb1[1].xyz;
-  
+
   //o0.xyz = max(float3(0,0,0), r0.xyz);
   o0.xyz = r0.xyz;
-  
+
   o0.w = 1;
   return;
 }

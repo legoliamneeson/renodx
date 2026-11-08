@@ -206,4 +206,3 @@ void main(
   o0.w = 1;
   return;
 }
-

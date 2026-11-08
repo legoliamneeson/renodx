@@ -1074,7 +1074,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     // CustomSwapchainShader(0x00000000),
     // BypassShaderEntry(0x00000000),
     __ALL_CUSTOM_SHADERS,
-    
+
 };
 
 ShaderInjectData shader_injection;
@@ -4262,8 +4262,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;
         renodx::mods::shader::allow_multiple_push_constants = true;
-        renodx::mods::shader::constant_buffer_offset = 50 * 4; 
-        renodx::mods::swapchain::set_color_space = false; 
+        renodx::mods::shader::constant_buffer_offset = 50 * 4;
+        renodx::mods::swapchain::set_color_space = false;
         renodx::mods::swapchain::use_device_proxy = true;
           renodx::mods::swapchain::use_resource_cloning = true;
         renodx::mods::swapchain::swap_chain_proxy_shaders = {
@@ -4525,11 +4525,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
             reshade::log::message(reshade::log::level::info, s.str().c_str());
           }
         }
-       
+
         // Upgrade only render-target resources and keep resource-view cloning
         // enabled so clears, RTVs and SRV variants continue to reference the same
         // upgraded resource.
-       
+
         const reshade::api::format scene_intermediate_formats[] = {
     reshade::api::format::r8g8b8a8_unorm,
     reshade::api::format::r8g8b8a8_typeless,
@@ -4562,12 +4562,12 @@ for (const auto old_format : scene_intermediate_formats) {
     });
   }
 }
-      
 
 
-     
-    
-        
+
+
+
+
         // D3D9 copy/readback interception. These callbacks are ignored for the
         // D3D11/D3D12 display-proxy side and are recursion-guarded internally.
         reshade::register_event<reshade::addon_event::copy_resource>(
@@ -4619,4 +4619,3 @@ for (const auto old_format : scene_intermediate_formats) {
 
   return TRUE;
 }
-

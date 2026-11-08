@@ -95,10 +95,10 @@ void main(
   r0.xyz = cb2[28].xxx * r0.xyz;
   r0.xyz = exp2(r0.xyz);
   r0.xyz = r2.xyz ? float3(0,0,0) : r0.xyz;
-  
+
   //r0.xyz = saturate(cb2[28].yyy * r0.xyz);
   r0.xyz = (cb2[28].yyy * r0.xyz);
-  
+
   r2.xyz = cb2[25].www * r1.xyz + -r0.xyz;
   r3.xyz = cb2[25].www * r1.xyz + r0.xyz;
   r4.xyz = cb2[25].www * r1.xyz;
@@ -117,16 +117,16 @@ void main(
   r0.xyz = -r0.xyz * r1.xyz + float3(1,1,1);
   r1.xyz = r5.yyy ? r2.xyz : r3.xyz;
   r0.xyz = r6.zzz ? r1.xyz : r0.xyz;
-  
+
   //r0.xyz = saturate(r5.zzz ? r0.xyz : r4.xyz);
   r0.xyz = (r5.zzz ? r0.xyz : r4.xyz);
-  
+
   r1.xyz = cb2[18].xyz + -r0.xyz;
   r0.xyz = cb2[28].www * r1.xyz + r0.xyz;
-  
+
   //o0.xyz = max(float3(0,0,0), r0.xyz);
   o0.xyz = r0.xyz;
-  
+
   o0.w = 1;
   return;
 }

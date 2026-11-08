@@ -82,7 +82,7 @@ void main(
   } else {
     r1.xy = r0.xy;
   }
-  
+
   r2.xyzw = r1.xyxy * float4(2,2,2,2) + float4(-1,-1,-1,-1);
   r2.xyzw = -cb2[5].xyxy + r2.xyzw;
   r0.w = dot(r2.zw, r2.zw);

@@ -61,13 +61,15 @@ namespace {
             return true; }, \
       },                                     \
   }
-renodx::mods::shader::CustomShaders custom_shaders = {
+auto custom_shaders = renodx::mods::shader::DefineCustomShaders({
     // CustomShaderEntry(0x00000000),
-    // CustomSwapchainShader(0x00000000),
     // BypassShaderEntry(0x00000000),
-        UpgradeRTVReplaceShader(0x316AEC37),
+    UpgradeRTVReplaceShader(0x316AEC37),
+    // This shader also draws offscreen, where UI brightness would change the input to later passes.
+    CustomSwapchainShader(0x96811647),
+    CustomSwapchainShader(0xC5A84C61),
     __ALL_CUSTOM_SHADERS,
-};
+});
 
 ShaderInjectData shader_injection;
 
@@ -109,11 +111,12 @@ renodx::utils::settings::Settings settings = {
         .label = "Tone Mapper",
         .section = "Tone Mapping",
         .tooltip = "Sets the tone mapper type",
-        .labels = {"Vanilla", "RenoDRT", "PsychoV24"},
+        .labels = {"Vanilla", "RenoDRT", "PsychoV24", "PsychoV30"},
         .parse = [](float value) {
           if (value < 0.5f) return TONE_MAP_TYPE_VANILLA;
           if (value < 1.5f) return TONE_MAP_TYPE_RENODRT;
-          return TONE_MAP_TYPE_PSYCHOV24;
+          if (value < 2.5f) return TONE_MAP_TYPE_PSYCHOV24;
+          return RENODX_TONE_MAP_TYPE_PSYCHOV30;
         },
         .is_visible = []() { return current_settings_mode >= 1; },
     },
@@ -147,6 +150,17 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Sets the brightness of UI and HUD elements in nits",
         .min = 48.f,
         .max = 500.f,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "ToneMapHDRBoost",
+        .binding = &shader_injection.hdr_boost,
+        .default_value = 0.f,
+        .label = "HDR Boost",
+        .section = "Tone Mapping",
+        .tooltip = "Boosts brighter scene values before HDR tone mapping.",
+        .max = 50.f,
+        .is_enabled = []() { return IsCustomToneMapperEnabled(); },
+        .parse = [](float value) { return value * 0.01f; },
     },
     new renodx::utils::settings::Setting{
         .key = "GammaCorrection",
@@ -409,6 +423,60 @@ renodx::utils::settings::Settings settings = {
         .is_visible = []() { return current_settings_mode >= 2; },
     },
     new renodx::utils::settings::Setting{
+        .key = "PsychoV30Compression",
+        .binding = &shader_injection.psychov30_compression,
+        .default_value = 0.f,
+        .label = "PsychoV30 Compression",
+        .section = "Color Grading",
+        .tooltip = "Adjusts the HDR shoulder. Zero selects automatic compression.",
+        .max = 400.f,
+        .format = "%.2f",
+        .parse = [](float value) { return value * 0.02f; },
+        .is_visible = []() {
+          return current_settings_mode >= 1.f && shader_injection.tone_map_type == RENODX_TONE_MAP_TYPE_PSYCHOV30;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30ConeResponse",
+        .binding = &shader_injection.psychov30_cone_response,
+        .default_value = 50.f,
+        .label = "PsychoV30 Cone Response",
+        .section = "Color Grading",
+        .tooltip = "Adjusts the cone response. 50 is neutral.",
+        .min = 0.5f,
+        .max = 100.f,
+        .format = "%.2f",
+        .parse = [](float value) { return value * 0.02f; },
+        .is_visible = []() {
+          return current_settings_mode >= 1.f && shader_injection.tone_map_type == RENODX_TONE_MAP_TYPE_PSYCHOV30;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30GamutCompression",
+        .binding = &shader_injection.psychov30_gamut_compression,
+        .default_value = 100.f,
+        .label = "PsychoV30 Gamut Compression",
+        .section = "Color Grading",
+        .max = 100.f,
+        .format = "%.0f%%",
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() {
+          return current_settings_mode >= 2.f && shader_injection.tone_map_type == RENODX_TONE_MAP_TYPE_PSYCHOV30;
+        },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "PsychoV30GamutMode",
+        .binding = &shader_injection.psychov30_gamut_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "PsychoV30 Gamut Mode",
+        .section = "Color Grading",
+        .labels = {"BT709", "BT2020"},
+        .is_visible = []() {
+          return current_settings_mode >= 2.f && shader_injection.tone_map_type == RENODX_TONE_MAP_TYPE_PSYCHOV30;
+        },
+    },
+    new renodx::utils::settings::Setting{
         .key = "ColorGradeScene",
         .binding = &shader_injection.color_grade_strength,
         .default_value = 100.f,
@@ -509,7 +577,7 @@ renodx::utils::settings::Settings settings = {
     {"R11G11B10_FLOAT", reshade::api::format::r11g11b10_float},
     {"R16G16B16A16_TYPELESS", reshade::api::format::r16g16b16a16_typeless},
 };
- 
+
 void OnPresetOff() {
   //   renodx::utils::settings::UpdateSetting("toneMapType", 0.f);
   //   renodx::utils::settings::UpdateSetting("toneMapPeakNits", 203.f);
@@ -799,10 +867,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
     // Important: this makes it a clone/hot-swap target instead of a simple global upgrade.
     .use_resource_view_cloning = true,
     .use_resource_view_hot_swap = true,
-}); 
+});
 
       break;
- 
+
     case DLL_PROCESS_DETACH:
       reshade::unregister_event<reshade::addon_event::present>(OnPresent);
       reshade::unregister_addon(h_module);

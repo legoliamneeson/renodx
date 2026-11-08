@@ -59,7 +59,7 @@ void main(
   r4.xyz = t1.Sample(s1_s, r0.xy).xyz; Tonemap_BloomScale(r4.xyz);
   r4.xyz = cb2[7].xxx * r4.xyz;
   r1.xyz = cb2[7].yyy * r1.xyz + r4.xyz;
-  
+
   //colorUntonemapped
   colorUntonemapped = r1.xyz * Tonemap_CalculatePreExposureMultiplier(cb13[0].xyz, cb13[1].xyz, cb13[2].xyz);
 

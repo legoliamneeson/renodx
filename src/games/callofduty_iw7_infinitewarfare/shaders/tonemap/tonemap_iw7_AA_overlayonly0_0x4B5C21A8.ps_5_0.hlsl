@@ -25,7 +25,7 @@ cbuffer cb2 : register(b2)
 // 3Dmigoto declarations
 #define cmp -
 
-//THIS IS WEIRD! It's only applying an overlay on the color. 
+//THIS IS WEIRD! It's only applying an overlay on the color.
 // - Bot vision 2nd overlay.
 // - Explosion lens dirt or flare.
 // The algorithm doesn't expect HDR luma, so there will be some chroma loss from saturate.
@@ -52,7 +52,7 @@ void main(
     r2.xy = r2.xz + r0.xz;
     r2.zw = t1.Sample(s1_s, r2.xy).xy;
     r2.xy = float2(0.5,0.5) * r2.xy;
-    r2.xy = t1.Sample(s1_s, r2.xy).xy; 
+    r2.xy = t1.Sample(s1_s, r2.xy).xy;
     r2.xyzw = cb2[0].xxyy * r2.xyzw;
     r2.xy = float2(0.5,0.5) * r2.xy;
     r2.xy = r2.zw * float2(0.5,0.5) + r2.xy;

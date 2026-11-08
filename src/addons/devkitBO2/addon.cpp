@@ -435,13 +435,10 @@ struct __declspec(uuid("0190ec1a-2e19-74a6-ad41-4df0d4d8caed")) DeviceData {
 [[nodiscard]] std::vector<uint8_t> LoadShaderDataForShaderHash(reshade::api::device* device, uint32_t shader_hash) {
   reshade::api::pipeline pipeline = {0};
 
-  auto* shader_shared_data = renodx::utils::shader::shared.data;
-  shader_shared_data->shader_pipeline_handles.if_contains(
-      {device, shader_hash},
-      [&pipeline](const auto& pair) {
-        if (pair.second.empty()) return;
-        auto handle = *pair.second.begin();
-        pipeline = {handle};
+  renodx::utils::shader::GetShaderPipelineHandles(
+      device, shader_hash, [&](const auto& pipeline_handles) {
+        if (pipeline_handles.empty()) return;
+        pipeline = {*pipeline_handles.begin()};
       });
   if (pipeline.handle == 0u) {
     throw std::runtime_error("Shader data not found.");
@@ -4311,16 +4308,12 @@ void OnInitPipelineTrackAddons(
   if (data == nullptr) return;
   if (data->has_synced_addon_shaders) return;
 
-  auto* shader_data = renodx::utils::shader::shared.data;
   bool found_replacement = false;
-  // std::shared_lock shader_data_lock(shader_device_data->mutex);
-  shader_data->runtime_replacements.for_each(
-      [&](const std::pair<const std::pair<reshade::api::device*, uint32_t>, std::span<const uint8_t>>& pair) {
-        const auto& [pair_device, shader_hash] = pair.first;
-        if (pair_device != device) return;
+  renodx::utils::shader::ForEachRuntimeReplacement(
+      device, [&](uint32_t shader_hash, std::span<const uint8_t> bytecode) {
         found_replacement = true;
         auto* shader_details = data->GetShaderDetails(shader_hash);
-        shader_details->addon_shader = pair.second;
+        shader_details->addon_shader = bytecode;
         if (shader_details->shader_source != ShaderDetails::ShaderSource::DISK_SHADER) {
           shader_details->shader_source = ShaderDetails::ShaderSource::ADDON_SHADER;
         }
@@ -4859,9 +4852,12 @@ bool OnDraw(reshade::api::command_list* cmd_list, DrawDetails::DrawMethods draw_
           .pipeline_stage = stage_state.stage,
       };
       if (stage_state.pipeline_details != nullptr) {
-        pipeline_details.shader_hashes = {
-            stage_state.pipeline_details->shader_hashes.begin(),
-            stage_state.pipeline_details->shader_hashes.end()};
+        for (const auto& identity : stage_state.pipeline_details->subobject_shaders) {
+          if (identity.shader_hash == 0u) continue;
+          if (std::ranges::find(pipeline_details.shader_hashes, identity.shader_hash) == pipeline_details.shader_hashes.end()) {
+            pipeline_details.shader_hashes.push_back(identity.shader_hash);
+          }
+        }
       }
 
       if ((draw_method == DrawDetails::DrawMethods::DISPATCH && stage_state.stage == reshade::api::pipeline_stage::compute_shader)

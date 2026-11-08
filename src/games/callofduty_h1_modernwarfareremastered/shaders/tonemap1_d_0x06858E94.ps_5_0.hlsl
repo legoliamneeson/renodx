@@ -76,7 +76,7 @@ void main(
   //   r0.xyz = r2.xyz ? r0.xyz : r1.xyz;
   // }
 
-  
+
   //LUT
   r0.xyz = r0.xyz * float3(0.96875,0.96875,0.96875) + float3(0.015625,0.015625,0.015625); //some offset idk
   r0.xyz = t2.Sample(s0_s, r0.xyz).xyz;
@@ -90,11 +90,11 @@ void main(
     r0.w = saturate(r0.w);
     r1.yzw = r0.www + -r0.xyz;
     r0.xyz = r1.xxx * r1.yzw + r0.xyz;
-    
+
     r1.xyz = cb2[3].xyz * r0.www + cb2[2].xyz;
     r1.xyz = r1.xyz * r0.www + cb2[1].xyz;
     r0.xyz = r0.xyz * r1.xyz + cb2[4].xyz;
-  }  
+  }
 
   //colorTonemapped
   colorTonemapped = r0.xyz;

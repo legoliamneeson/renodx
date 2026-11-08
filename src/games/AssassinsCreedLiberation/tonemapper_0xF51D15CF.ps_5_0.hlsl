@@ -1,76 +1,9 @@
 #include "./common.hlsl"
 
-// ---- Created with 3Dmigoto v1.3.16 on Sat Jun 20 21:15:57 2026
-// Fixed RenoDX exposure pass - PsychoV24
-//
-// Fix:
-//   This pass NO LONGER applies HDRDisplayMap / Psycho / PostTonemapSliders
-//   in HDR modes.
-//   It only applies exposure and forwards scene color to the later LUT/final
-//   tonemap pass.
-//
-// PsychoV24 fix:
-//   PsychoV24 uses tone-map type 24.
-//   The old shader checked for PsychoV22/type 22, causing PsychoV24 to fall
-//   through the vanilla SDR path.
-//
-// Result:
-//   - Vanilla still uses the game's original ACES fitted SDR tonemap.
-//   - RenoDRT forwards unclipped HDR scene values.
-//   - PsychoV24 forwards unclipped HDR scene values.
-//   - The later LUT/final shader remains the ONLY HDR tonemapper.
-//   - Prevents double tonemapping.
-//   - Prevents PsychoV24 input from being clipped to SDR first.
-
 SamplerState _sampler_Scene_s : register(s0);
 SamplerState _sampler_Exposure_s : register(s1);
-
-Texture2D _texture_Scene : register(t0);
-Texture2D _texture_Exposure : register(t1);
-
-
-// ============================================================================
-// PsychoV24
-// ============================================================================
-
-#ifndef RENODX_TONE_MAP_TYPE_PSYCHOV24
-#define RENODX_TONE_MAP_TYPE_PSYCHOV24 24.0f
-#endif
-
-
-// ============================================================================
-// Safe helpers
-// ============================================================================
-
-float3 EncodeSRGBSafeLocal(float3 color)
-{
-    color = max(color, 0.0f);
-
-    float3 low = color * 12.92f;
-    float3 high = pow(color, 1.0f / 2.4f) * 1.055f - 0.055f;
-
-    float3 useHigh = step(
-        float3(0.0031308f, 0.0031308f, 0.0031308f),
-        color
-    );
-
-    return lerp(low, high, useHigh);
-}
-
-
-float3 SafeFinite3(float3 color)
-{
-    // Remove NaN without clipping HDR values above 1.0.
-    color = (color == color) ? color : 0.0f.xxx;
-
-    // R16G16B16A16_FLOAT positive representable range.
-    return clamp(color, 0.0f.xxx, 65504.0f.xxx);
-}
-
-
-// ============================================================================
-// Original game SDR tonemapper
-// ============================================================================
+Texture2D<float4> _texture_Scene : register(t0);
+Texture2D<float4> _texture_Exposure : register(t1);
 
 float3 GameACESFittedTonemap(float3 color)
 {
@@ -151,150 +84,35 @@ float3 GameACESFittedTonemap(float3 color)
 }
 
 
-// ============================================================================
-// Tone-map mode detection
-// ============================================================================
-
-bool IsRenoDRTMode()
-{
-    return abs(
-        RENODX_TONE_MAP_TYPE
-        - renodx::draw::TONE_MAP_TYPE_RENO_DRT
-    ) < 0.5f;
+float3 MatchSceneToSDR(float3 scene, float peak, float type = -1.f) {
+  float3 reference = GameACESFittedTonemap(scene);
+  if (peak <= 1.f) return reference;
+  float3 hdr = MapSceneToDisplay(scene, peak, type);
+  float3 sdr = MapSceneToDisplay(scene, 1.f, type);
+  float3 result = renodx::tonemap::UpgradeToneMap(hdr, sdr, reference);
+  // Retain the original black/toe below the matched mid-gray pivot. The HDR
+  // response is already fully active at mid-gray, well below paper white.
+  result = lerp(reference, result, smoothstep(ACES_ANCHOR_IN * 0.5f,
+      ACES_ANCHOR_IN, renodx::color::y::from::BT709(scene)));
+  float maximum = max(result.r, max(result.g, result.b));
+  float limit = GetWorkingPeak(peak);
+  if (limit > 1.f && maximum > 0.f) {
+    result *= renodx::tonemap::ExponentialRollOff(maximum, max(1.f, limit * 0.9f), limit) / maximum;
+  }
+  return max(result, 0.f);
 }
 
+void main(float4 position : SV_Position0, float2 uv : TEXCOORD0, out float4 output : SV_Target0) {
+  float3 scene = max(_texture_Scene.Sample(_sampler_Scene_s, uv).rgb, 0.f);
+  scene *= max(_texture_Exposure.Sample(_sampler_Exposure_s, 0.f.xx).x, 0.f);
 
-bool IsPsychoV24Mode()
-{
-    return abs(
-        RENODX_TONE_MAP_TYPE
-        - RENODX_TONE_MAP_TYPE_PSYCHOV24
-    ) < 0.5f;
-}
-
-
-bool IsCustomHDRMode()
-{
-    return IsRenoDRTMode()
-        || IsPsychoV24Mode();
-}
-
-
-// ============================================================================
-// Main
-// ============================================================================
-
-void main(
-    float4 v0 : SV_Position0,
-    float2 v1 : TEXCOORD0,
-    out float4 o0 : SV_Target0)
-{
-    // ------------------------------------------------------------------------
-    // Sample original linear scene
-    // ------------------------------------------------------------------------
-
-    float3 sceneColor =
-        _texture_Scene.Sample(
-            _sampler_Scene_s,
-            v1.xy
-        ).xyz;
-
-    float exposure =
-        _texture_Exposure.Sample(
-            _sampler_Exposure_s,
-            float2(0.0f, 0.0f)
-        ).x;
-
-
-    // ------------------------------------------------------------------------
-    // Sanitize input
-    // ------------------------------------------------------------------------
-
-    sceneColor = SafeFinite3(sceneColor);
-
-    exposure =
-        (exposure == exposure)
-        ? exposure
-        : 1.0f;
-
-    exposure = clamp(
-        exposure,
-        0.0f,
-        65504.0f
-    );
-
-
-    // ------------------------------------------------------------------------
-    // Apply game's exposure
-    // ------------------------------------------------------------------------
-
-    sceneColor *= exposure;
-
-    sceneColor = SafeFinite3(sceneColor);
-
-
-    // ========================================================================
-    // VANILLA / SDR
-    // ========================================================================
-    //
-    // Keep the game's ACES fitted tonemap here.
-    //
-    // The following LUT/final pass expects SDR gamma input when RenoDX HDR
-    // tonemapping is disabled.
-    //
-    // ========================================================================
-
-    if (!IsCustomHDRMode())
-    {
-        float3 sdrColor =
-            GameACESFittedTonemap(sceneColor);
-
-        o0.rgb =
-            EncodeSRGBSafeLocal(sdrColor);
-
-        o0.a = 1.0f;
-
-        return;
-    }
-
-
-    // ========================================================================
-    // RENO DRT / PSYCHOV24 HDR
-    // ========================================================================
-    //
-    // DO NOT:
-    //
-    //   - run GameACESFittedTonemap
-    //   - saturate sceneColor
-    //   - call PreTonemapSliders
-    //   - call HDRDisplayMap
-    //   - call psychotm_test24
-    //   - call PostTonemapSliders
-    //
-    // here.
-    //
-    // This pass exists only to apply the game's exposure and forward the
-    // unclipped scene into the later LUT/final shader.
-    //
-    // EncodeSafe is only the intermediate gamma representation. It does NOT
-    // intentionally clamp HDR scene values to 1.0.
-    //
-    // The later shader DecodeSafe() restores this to linear before applying:
-    //
-    //      LUT reconstruction
-    //          ->
-    //      RenoDRT / PsychoV24
-    //          ->
-    //      HDR intermediate output
-    //
-    // ========================================================================
-
-    o0.rgb =
-        renodx::color::gamma::EncodeSafe(
-            sceneColor
-        );
-
-    o0.a = 1.0f;
-
+  if (!IsCustomHDRMode() || RENODX_PEAK_WHITE_NITS <= 0.f) {
+    output = float4(renodx::color::srgb::EncodeSafe(GameACESFittedTonemap(scene)), 1.f);
     return;
+  }
+
+  scene = PreTonemapSliders(scene);
+  float peak = max(RENODX_PEAK_WHITE_NITS / max(RENODX_DIFFUSE_WHITE_NITS, 1.f), 1.f);
+  float3 color = MatchSceneToSDR(scene, peak);
+  output = float4(renodx::color::srgb::EncodeSafe(max(color, 0.f)), 1.f);
 }

@@ -38,5 +38,3 @@ float4 main(PixelInput input) : COLOR0 {
   // The extra HDR gain made broad highlights merge into blobs in some levels.
   return float4(MW3Positive(sdrBloom), 1.0f);
 }
-
-

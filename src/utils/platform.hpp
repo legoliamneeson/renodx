@@ -18,6 +18,7 @@
 #if WIN32
 #include <shlobj.h>
 #endif
+
 #include <algorithm>
 #include <filesystem>
 #include <map>
@@ -38,57 +39,6 @@ inline bool PinModule(const void* address) {
          && module != nullptr;
 }
 
-inline void* ProcessHeapAlignedAlloc(
-    std::size_t size,
-    std::size_t alignment,
-    DWORD flags = 0) {
-  constexpr std::size_t kNativeHeapAlignment = sizeof(void*) == 4 ? 8u : 16u;
-
-  if (alignment <= kNativeHeapAlignment) {
-    return ::HeapAlloc(::GetProcessHeap(), flags, size);
-  }
-
-  if ((alignment & (alignment - 1u)) != 0u) {
-    return nullptr;
-  }
-
-  const std::size_t overhead = sizeof(void*) + alignment - 1u;
-  if (size > (std::numeric_limits<std::size_t>::max)() - overhead) {
-    return nullptr;
-  }
-
-  auto* raw = static_cast<std::byte*>(
-      ::HeapAlloc(::GetProcessHeap(), flags, size + overhead));
-  if (raw == nullptr) {
-    return nullptr;
-  }
-
-  const auto start = reinterpret_cast<std::uintptr_t>(raw + sizeof(void*));
-  const auto aligned =
-      (start + alignment - 1u)
-      & ~(static_cast<std::uintptr_t>(alignment) - 1u);
-
-  auto* storage = reinterpret_cast<void*>(aligned);
-  reinterpret_cast<void**>(storage)[-1] = raw;
-  return storage;
-}
-
-inline void ProcessHeapAlignedFree(
-    void* storage,
-    std::size_t alignment) noexcept {
-  if (storage == nullptr) return;
-
-  constexpr std::size_t kNativeHeapAlignment = sizeof(void*) == 4 ? 8u : 16u;
-
-  if (alignment <= kNativeHeapAlignment) {
-    ::HeapFree(::GetProcessHeap(), 0, storage);
-    return;
-  }
-
-  void* raw = reinterpret_cast<void**>(storage)[-1];
-  ::HeapFree(::GetProcessHeap(), 0, raw);
-}
-
 template <typename T>
 struct ProcessAllocator {
   using value_type = T;
@@ -99,21 +49,37 @@ struct ProcessAllocator {
   explicit constexpr ProcessAllocator(const ProcessAllocator<U>& other) noexcept {
     (void)other;
   }
+
   [[nodiscard]] T* allocate(std::size_t count) {  // NOLINT(readability-identifier-naming)
-    if (count > (std::numeric_limits<std::size_t>::max)() / sizeof(T)) {
+    constexpr std::size_t padding = (alignof(T) > MEMORY_ALLOCATION_ALIGNMENT
+                                        ? alignof(T) - 1 + sizeof(void*)
+                                        : 0);
+    if (count > ((std::numeric_limits<std::size_t>::max)() - padding) / sizeof(T)) {
       throw std::bad_array_new_length();
     }
 
-    auto* storage = static_cast<T*>(
-        ProcessHeapAlignedAlloc(count * sizeof(T), alignof(T)));
+    auto* storage = static_cast<T*>(::HeapAlloc(::GetProcessHeap(), 0, (count * sizeof(T)) + padding));
     if (storage == nullptr) {
       throw std::bad_alloc();
     }
+    if constexpr (alignof(T) > MEMORY_ALLOCATION_ALIGNMENT) {
+      // Container nodes can themselves contain over-aligned parallel maps.
+      const auto address = reinterpret_cast<std::uintptr_t>(storage) + sizeof(void*);
+      const auto aligned_address = (address + alignof(T) - 1) & ~(static_cast<std::uintptr_t>(alignof(T)) - 1);
+      reinterpret_cast<void**>(aligned_address)[-1] = storage;
+      return reinterpret_cast<T*>(aligned_address);
+    }
     return storage;
   }
+
   void deallocate(T* storage, std::size_t count) noexcept {  // NOLINT(readability-identifier-naming)
     (void)count;
-    ProcessHeapAlignedFree(storage, alignof(T));
+    if (storage == nullptr) return;
+    void* allocation = storage;
+    if constexpr (alignof(T) > MEMORY_ALLOCATION_ALIGNMENT) {
+      allocation = reinterpret_cast<void**>(storage)[-1];
+    }
+    ::HeapFree(::GetProcessHeap(), 0, allocation);
   }
 };
 
@@ -123,6 +89,7 @@ inline bool operator==(const ProcessAllocator<T>& left, const ProcessAllocator<U
   (void)right;
   return true;
 }
+
 template <typename T, typename U>
 inline bool operator!=(const ProcessAllocator<T>& left, const ProcessAllocator<U>& right) noexcept {
   (void)left;
@@ -132,19 +99,44 @@ inline bool operator!=(const ProcessAllocator<T>& left, const ProcessAllocator<U
 
 template <typename T, typename... Args>
 inline T* CreateSharedObject(Args&&... args) {
-  auto* storage = static_cast<T*>(
-      ProcessHeapAlignedAlloc(sizeof(T), alignof(T), HEAP_ZERO_MEMORY));
+  constexpr std::size_t padding = (alignof(T) > MEMORY_ALLOCATION_ALIGNMENT
+                                      ? alignof(T) - 1 + sizeof(void*)
+                                      : 0);
+  static_assert(sizeof(T) <= (std::numeric_limits<std::size_t>::max)() - padding);
+  // Keep the original heap pointer until construction succeeds, including on exceptions.
+  std::unique_ptr<void, decltype([](void* allocation) {
+                    ::HeapFree(::GetProcessHeap(), 0, allocation);
+                  })>
+      allocation(::HeapAlloc(::GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(T) + padding));
+  auto* storage = static_cast<T*>(allocation.get());
+  if (storage == nullptr) {
+    ::OutputDebugStringA("RenoDX: shared-object process-heap allocation failed.\n");
+  }
   assert(storage != nullptr);
   if (storage == nullptr) return nullptr;
 
-  return std::construct_at(storage, std::forward<Args>(args)...);
+  if constexpr (alignof(T) > MEMORY_ALLOCATION_ALIGNMENT) {
+    // HeapAlloc guarantees only 8-byte alignment on x86 (16 on x64).
+    const auto address = reinterpret_cast<std::uintptr_t>(storage) + sizeof(void*);
+    const auto aligned_address = (address + alignof(T) - 1) & ~(static_cast<std::uintptr_t>(alignof(T)) - 1);
+    storage = reinterpret_cast<T*>(aligned_address);
+    reinterpret_cast<void**>(storage)[-1] = allocation.get();
+  }
+  std::construct_at(storage, std::forward<Args>(args)...);
+  allocation.release();
+  return storage;
 }
+
 template <typename T>
 inline void DeleteSharedObject(T* object) {
   if (object == nullptr) return;
 
+  void* allocation = object;
+  if constexpr (alignof(T) > MEMORY_ALLOCATION_ALIGNMENT) {
+    allocation = reinterpret_cast<void**>(object)[-1];
+  }
   object->~T();
-  ProcessHeapAlignedFree(object, alignof(T));
+  ::HeapFree(::GetProcessHeap(), 0, allocation);
 }
 
 template <typename T>
@@ -153,6 +145,7 @@ struct ProcessSharedSlot {
   void* view = nullptr;
   void* handle = nullptr;
 };
+
 inline void FormatProcessSharedSlotName(wchar_t* buffer, size_t buffer_count, const wchar_t* kind, const GUID& guid) {
   std::swprintf(
       buffer,
@@ -172,6 +165,7 @@ inline void FormatProcessSharedSlotName(wchar_t* buffer, size_t buffer_count, co
       guid.Data4[6],
       guid.Data4[7]);
 }
+
 template <typename T>
 inline ProcessSharedSlot<T> OpenProcessSharedSlot(const GUID& guid, auto&& initialize) {
   struct SlotStorage {
@@ -182,6 +176,7 @@ inline ProcessSharedSlot<T> OpenProcessSharedSlot(const GUID& guid, auto&& initi
   wchar_t mutex_name[128] = {};
   FormatProcessSharedSlotName(mapping_name, std::size(mapping_name), L"Mapping", guid);
   FormatProcessSharedSlotName(mutex_name, std::size(mutex_name), L"Mutex", guid);
+
   auto* const mutex_handle = ::CreateMutexW(nullptr, FALSE, mutex_name);
   assert(mutex_handle != nullptr);
   if (mutex_handle == nullptr) return {};
@@ -192,6 +187,7 @@ inline ProcessSharedSlot<T> OpenProcessSharedSlot(const GUID& guid, auto&& initi
     ::CloseHandle(mutex_handle);
     return {};
   }
+
   ProcessSharedSlot<T> slot = {};
   slot.handle = ::CreateFileMappingW(
       INVALID_HANDLE_VALUE,
@@ -217,6 +213,7 @@ inline ProcessSharedSlot<T> OpenProcessSharedSlot(const GUID& guid, auto&& initi
       slot.handle = nullptr;
     }
   }
+
   if (slot.value != nullptr) {
     std::forward<decltype(initialize)>(initialize)(*slot.value);
   }
@@ -225,6 +222,7 @@ inline ProcessSharedSlot<T> OpenProcessSharedSlot(const GUID& guid, auto&& initi
   ::CloseHandle(mutex_handle);
   return slot;
 }
+
 static std::vector<DISPLAYCONFIG_PATH_INFO> GetPathInfos() {
   for (LONG result = ERROR_INSUFFICIENT_BUFFER;
        result == ERROR_INSUFFICIENT_BUFFER;) {
@@ -247,11 +245,13 @@ static std::vector<DISPLAYCONFIG_PATH_INFO> GetPathInfos() {
   }
   return {};
 }
+
 static std::optional<DISPLAYCONFIG_PATH_INFO> GetPathInfo(HMONITOR monitor) {
   // Get the monitor name.
   MONITORINFOEX monitor_info = {};
   monitor_info.cbSize = sizeof(monitor_info);
   if (!GetMonitorInfo(monitor, &monitor_info)) return std::nullopt;
+
   // Look for a path info with a matching name.
   std::vector<DISPLAYCONFIG_PATH_INFO> path_infos = GetPathInfos();
   for (const auto& info : path_infos) {
@@ -266,6 +266,7 @@ static std::optional<DISPLAYCONFIG_PATH_INFO> GetPathInfo(HMONITOR monitor) {
     if (mbstowcs_s(&out_size, sz_device_wide, monitor_info.szDevice, 32) != ERROR_SUCCESS) continue;
     if (out_size == 0) continue;
     if (wcscmp(sz_device_wide, device_name.viewGdiDeviceName) != 0) continue;
+
     return info;
   }
   return std::nullopt;
@@ -278,6 +279,7 @@ static void Launch(const std::string& location) {
   std::system(location);
 #endif
 }
+
 template <typename... Args>
 static void LaunchURL(Args... args) {
   std::string url = (std::string(args) + ...);
@@ -295,12 +297,14 @@ static void LaunchURL(Args... args) {
   std::system(url.c_str());
 #endif
 }
+
 static std::filesystem::path GetCurrentWorkingPath() {
   return std::filesystem::current_path();
 }
 
 static std::map<std::string, std::string> GetEnvironmentVariables() {
   std::map<std::string, std::string> env_map;
+
 #ifdef WIN32
   LPWCH env_strings = GetEnvironmentStringsW();
   if (env_strings == nullptr) {
@@ -316,6 +320,7 @@ static std::map<std::string, std::string> GetEnvironmentVariables() {
     }
     p += ws.length() + 1;
   }
+
   FreeEnvironmentStringsW(env_strings);
 #else
   extern char** environ;
@@ -330,6 +335,7 @@ static std::map<std::string, std::string> GetEnvironmentVariables() {
 
   return env_map;
 }
+
 static std::filesystem::path GetCurrentProcessPath() {
   TCHAR file_name[MAX_PATH + 1];
   DWORD chars_written = GetModuleFileName(nullptr, file_name, MAX_PATH + 1);
@@ -338,6 +344,7 @@ static std::filesystem::path GetCurrentProcessPath() {
   }
   return "";
 }
+
 static bool UpdateReadOnlyAttribute(const std::filesystem::path& file_path, bool set_readonly) {
   DWORD attributes = GetFileAttributes(file_path.string().c_str());
   if (attributes == INVALID_FILE_ATTRIBUTES) {
@@ -349,12 +356,14 @@ static bool UpdateReadOnlyAttribute(const std::filesystem::path& file_path, bool
   } else {
     attributes &= ~FILE_ATTRIBUTE_READONLY;  // Remove read-only attribute
   }
+
   if (!SetFileAttributes(file_path.string().c_str(), attributes)) {
     return false;  // Failed to set attributes
   }
 
   return true;  // Successfully updated the read-only attribute
 }
+
 static std::string GetProductName(const std::filesystem::path& path = GetCurrentProcessPath()) {
   [[maybe_unused]] DWORD dummy{};
   const auto required_buffer_size{
@@ -387,11 +396,13 @@ static std::string GetProductName(const std::filesystem::path& path = GetCurrent
       or ((required_buffer_size / sizeof(wchar_t)) < value_length)) {
     return "";
   }
+
   const std::wstring product_name{static_cast<const wchar_t*>(p_value), static_cast<::std::size_t>(value_length - 1)};  // subtract 1 to exclude the null terminator
   size_t output_size = product_name.length() + 1;                                                                       // +1 for null terminator
   auto output_string = std::make_unique<char[]>(output_size);
   size_t chars_converted = 0;
   auto ret = wcstombs_s(&chars_converted, output_string.get(), output_size, product_name.c_str(), product_name.length());
+
   // wide-character-string-to-multibyte-string_safe
   if (ret == S_OK && chars_converted > 0) {
     return std::string(output_string.get());
@@ -411,10 +422,12 @@ static std::string GetWindowClassName(HWND hwnd) {
   }
   return "";
 }
+
 static bool IsDummyWindow(HWND hwnd) {
   auto lower_case_view = GetWindowClassName(hwnd) | std::views::transform([](auto c) { return std::tolower(c); });
   return !std::ranges::search(lower_case_view, std::string("dummy")).empty();
 }
+
 static std::string GetFileVersion(const std::filesystem::path& path) {
   [[maybe_unused]] DWORD dummy{};
   const auto required_buffer_size{
@@ -423,6 +436,7 @@ static std::string GetFileVersion(const std::filesystem::path& path) {
   if (0 == required_buffer_size) {
     return "";
   }
+
   const auto p_buffer{
       std::make_unique<char[]>(
           static_cast<::std::size_t>(required_buffer_size))};
@@ -432,6 +446,7 @@ static std::string GetFileVersion(const std::filesystem::path& path) {
   if (FALSE == get_version_info_result) {
     return "";
   }
+
   LPVOID p_value{};
   UINT value_length{};
   const auto query_result{
@@ -444,6 +459,7 @@ static std::string GetFileVersion(const std::filesystem::path& path) {
   }
 
   auto* fixed_file_info = static_cast<VS_FIXEDFILEINFO*>(p_value);
+
   if (fixed_file_info->dwSignature == 0xfeef04bd) {  // Check valid signature
     // Format version numbers
     std::string version = std::to_string(HIWORD(fixed_file_info->dwFileVersionMS)) + "." + std::to_string(LOWORD(fixed_file_info->dwFileVersionMS)) + "." + std::to_string(HIWORD(fixed_file_info->dwFileVersionLS)) + "." + std::to_string(LOWORD(fixed_file_info->dwFileVersionLS));
@@ -452,6 +468,7 @@ static std::string GetFileVersion(const std::filesystem::path& path) {
 
   return "";  // Invalid file signature
 }
+
 static void OpenExplorerToFile(const std::filesystem::path& file_path) {
 #if WIN32
   PIDLIST_ABSOLUTE pidl = nullptr;
@@ -465,6 +482,7 @@ static void OpenExplorerToFile(const std::filesystem::path& file_path) {
   std::system(command.c_str());
 #endif
 }
+
 static HMODULE FindModule(const std::string& module_name) {
   const auto* module_char_array = module_name.c_str();
 
@@ -478,6 +496,7 @@ static HMODULE FindModule(const std::string& module_name) {
 
   return module;
 }
+
 static bool IsModuleLoaded(const std::string& module_name) {
   const auto module_file = std::filesystem::path(module_name).filename().string();
   if (module_file.empty()) return false;

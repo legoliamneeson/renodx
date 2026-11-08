@@ -75,7 +75,7 @@ void Tonemap_UpgradeTonemap0(inout float3 colorUntonemapped, in float4 r0) {
 
   //CUSTOM_GRADE_CHROMA
   colorUntonemapped = renodx::tonemap::UpgradeToneMap(
-    colorUntonemapped, r0.xyz, r0.xyz, 
+    colorUntonemapped, r0.xyz, r0.xyz,
     CUSTOM_GRADE_CHROMA, 0
   );
 }
@@ -85,7 +85,7 @@ void ADSSights_Scale(inout float4 o0) {
 }
 
 void Tonemap_BloomScale(inout float4 color) {
-  color.xyz *= CUSTOM_BLOOM_MULTIPLIER; 
+  color.xyz *= CUSTOM_BLOOM_MULTIPLIER;
   color.w = 1;
 }
 
@@ -113,7 +113,7 @@ float PreExposure_GetAutoexposure(float4 v) {
   return result;
 }
 
-float Tonemap_CalculatePreExposureMultiplier(float4 thresholds, float4 autoexp/*, float4 v2*/) 
+float Tonemap_CalculatePreExposureMultiplier(float4 thresholds, float4 autoexp/*, float4 v2*/)
 {
   //v0.xyz = high, mid, low thresholds
   //v1.xyz = high, mid, low multipliers
@@ -134,7 +134,7 @@ float Tonemap_CalculatePreExposureMultiplier(float4 thresholds, float4 autoexp/*
 
 void Tonemap_RecoverYFromW(inout float4 r0) {
   if (RENODX_TONE_MAP_TYPE == 0) return;
-  
+
   r0.xyz = renodx::color::correct::Luminance(r0.xyz, Tonemap_GetY(r0.xyz), r0.w, 1); //correct
   r0.w = 1; //reset
 }

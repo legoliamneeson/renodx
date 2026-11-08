@@ -1,4 +1,4 @@
-#include "./shared.h"
+#include "./color_grade.hlsli"
 
 float3 fColorCorrectGamma : register(c9);
 float4 fHermiteParam[8] : register(c1);
@@ -160,13 +160,14 @@ float4 main(float texcoord : TEXCOORD) : COLOR {
   r0.w = r0.w * r1.y;
   r0.z = r1.x * r0.w + r0.z;
   r0.x = r0.x * r1.y + r0.z;
-  r0.x = saturate(r0.y + r0.x);
+  float curve = r0.y + r0.x;
+  bool hdr = UseSceneHDR();
+  o.w = saturate(curve);
 
-  o.w = r0.x;
-
-  float base_linear = max(r0.x, kEpsilon);
+  float base_linear = max(hdr ? curve : o.w, kEpsilon);
   float3 gamma_linear = exp2(log2(base_linear) * fColorCorrectGamma.xyz);
-  o.xyz = LinearToSRGB(gamma_linear);
+  float3 encoded = LinearToSRGB(gamma_linear);
+  o.xyz = hdr ? encoded : QuantizeGameLut(encoded);
 
   return o;
 }

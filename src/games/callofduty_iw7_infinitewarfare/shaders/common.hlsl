@@ -59,12 +59,12 @@ float Sum3(in float3 v) {
 // }
 
 void Tonemap_BloomScale(inout float4 color) {
-  color.xyz *= CUSTOM_BLOOM_MULTIPLIER; 
+  color.xyz *= CUSTOM_BLOOM_MULTIPLIER;
   color.w = 1;
 }
 
 void Tonemap_BloomScale(inout float3 color) {
-  color.xyz *= CUSTOM_BLOOM_MULTIPLIER; 
+  color.xyz *= CUSTOM_BLOOM_MULTIPLIER;
 }
 
 float PreExposure_GetOffset(in float4 v) {
@@ -81,10 +81,10 @@ float PreExposure_GetAutoexposure(in float4 v) {
   return result;
 }
 
-float Tonemap_CalculatePreExposureMultiplier(in float3 v1, in float3 v2, in float3 v3) 
+float Tonemap_CalculatePreExposureMultiplier(in float3 v1, in float3 v2, in float3 v3)
 {
   float target;
-  
+
   target = 0;
   target += max(v1.y, v1.z) * CUSTOM_PREEXPOSURE_OFFSET_MULTIPLIER;
   target += max(v2.y, v2.z) * CUSTOM_PREEXPOSURE_AUTO_MULTIPLIER;
@@ -98,10 +98,10 @@ float Tonemap_CalculatePreExposureMultiplier(in float3 v1, in float3 v2, in floa
 }
 
 #define MINIMUM_Y 0.00001f
-// static renodx::debug::graph::Config graph_config; 
+// static renodx::debug::graph::Config graph_config;
 float3 Tonemap_Do(float3 colorUntonemapped, float3 colorTonemapped, /* float3 colorSDRNeutral, */ float2 uv, Texture2D<float4> texColor) {
   float3 result;
-    
+
   //decode
   colorTonemapped = max((float3)0, colorTonemapped);
   colorTonemapped = renodx::color::srgb::Decode(colorTonemapped);
@@ -117,7 +117,7 @@ float3 Tonemap_Do(float3 colorUntonemapped, float3 colorTonemapped, /* float3 co
 
     //graph start
     // if (CUSTOM_TONEMAP_DEBUG == 1) graph_config = renodx::debug::graph::DrawStart(uv, colorUntonemapped, texColor, RENODX_PEAK_WHITE_NITS, RENODX_DIFFUSE_WHITE_NITS);
-    
+
     //colorUntonemapped clamp
     {
       colorUntonemapped = max((float3)0, colorUntonemapped);

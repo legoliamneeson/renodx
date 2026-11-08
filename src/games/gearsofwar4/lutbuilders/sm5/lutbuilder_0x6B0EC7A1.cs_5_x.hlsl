@@ -265,7 +265,7 @@ void main(uint3 vThreadID: SV_DispatchThreadID) {
   r0.xyz = r0.xyz * r0.www;
   r0.xyz = r1.xyz * r1.www + r0.xyz;
   r0.xyz = r2.xyz * r3.yyy + r0.xyz;
-  
+
   SetUntonemappedAP1(r0.xyz);
 
   r1.x = dot(float3(1.70505154,-0.621790707,-0.0832583979), r0.xyz);

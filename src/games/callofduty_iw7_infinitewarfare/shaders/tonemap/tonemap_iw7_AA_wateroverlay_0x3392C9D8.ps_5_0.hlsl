@@ -264,7 +264,7 @@ void main(
   r2.x = saturate(dot(r4.xyz, cb2[4].xyz));
   r2.y = saturate(dot(r4.xyz, cb2[5].xyz));
   r2.z = saturate(dot(r4.xyz, cb2[6].xyz));
-  
+
   r2.xyz = log2(r2.xyz);
   r2.xyz = float3(0.416666657,0.416666657,0.416666657) * r2.xyz;
   r2.xyz = exp2(r2.xyz);

@@ -1,4 +1,5 @@
-// SDR-accurate RE6 color grading; preserve the original matrix and table domain.
+#include "./color_grade.hlsli"
+
 sampler2D SSFilter__tBaseMap             : register(s0);
 sampler2D SSWrapPoint__tTVNoiseMap       : register(s1);
 sampler2D SSWrapPoint__tTVNoiseMaskMap   : register(s2);
@@ -15,87 +16,6 @@ float4 fTVNoiseHVSync   : register(c8);
 float4 CBBloomFilter__packed0 : register(c9);
 float4 fColorCorrectColor     : register(c10);
 
-
-float SafeFinitePositive1(float value)
-{
-    // NaN is the only floating-point value where value != value.
-    value = (value == value) ? value : 0.0f;
-
-    // Preserve HDR while remaining finite for upgraded FP16 targets.
-    return min(
-        max(value, 0.0f),
-        65504.0f
-    );
-}
-
-
-float3 SafePositive(float3 color)
-{
-    return float3(
-        SafeFinitePositive1(color.r),
-        SafeFinitePositive1(color.g),
-        SafeFinitePositive1(color.b)
-    );
-}
-
-
-float3 SRGBToLinear_Unclamped(float3 color)
-{
-    // Preserve the existing behavior: allow HDR above 1.0, but remove negative
-    // values before pow() so upgraded float targets cannot create NaNs.
-    color = SafePositive(color);
-
-    float3 low =
-        color / 12.92f;
-
-    float3 high =
-        pow(
-            max(
-                (color + 0.055f) / 1.055f,
-                0.0f.xxx
-            ),
-            2.4f.xxx
-        );
-
-    return SafePositive(
-        lerp(
-            high,
-            low,
-            color <= 0.03928f
-        )
-    );
-}
-
-
-float3 LinearToSRGB_Unclamped(float3 color)
-{
-    // Do not clamp the upper range. The actual HDR tonemapper is later.
-    color = SafePositive(color);
-
-    float3 low =
-        color * 12.92f;
-
-    float3 high =
-        1.055f
-        * pow(
-            max(color, 0.0f.xxx),
-            (1.0f / 2.4f).xxx
-        )
-        - 0.055f;
-
-    return SafePositive(
-        lerp(
-            high,
-            low,
-            color <= 0.003131f
-        )
-    );
-}
-
-
-// ============================================================================
-// Original TV-noise processing
-// ============================================================================
 
 float3 RGBToYCbCr_WithNoise(
     float3 rgb,
@@ -157,238 +77,78 @@ float3 YCbCrToRGB(float3 ycbcr)
 }
 
 
-// ============================================================================
-// Original color-correction matrix
-// ============================================================================
+float3 SampleGameGradeInput(float2 texcoord, float2 noise_uv, bool hdr) {
+  float4 noise_coords = noise_uv.xyxy * fTVNoisePower.zwzw + fTVNoiseUVOffset.xyxy;
+  float4 noise_a = tex2D(SSWrapPoint__tTVNoiseMap, noise_coords.xy);
+  float4 noise_b = tex2D(SSWrapPoint__tTVNoiseMap, noise_coords.zw);
+  float3 noise = (float3(noise_b.yz, noise_a.x) - 0.5f) * (1.f + fTVNoiseHVSync.z);
 
-float3 ApplyColorCorrectMatrix(float3 color)
-{
-    // Matches the original assembly:
-    //
-    // r1 = color.y * c2
-    // r1 = color.x * c1 + r1
-    // r1 = color.z * c3 + r1
-    // r1 = r1 + c4
+  float3 base = tex2D(SSFilter__tBaseMap, texcoord).rgb;
+  float3 color = DecodeGameSRGB(hdr ? base : saturate(base));
+  color = YCbCrToRGB(RGBToYCbCr_WithNoise(color, noise));
+  float scanline = tex2D(SSWrapPoint__tTVNoiseMaskMap, noise_uv * fTVNoiseScanline.z).x;
+  color *= 1.f - (1.f - scanline) * fTVNoiseScanline.y;
 
-    return
-        color.r * fColorCorrectMatrix[0].xyz
-        + color.g * fColorCorrectMatrix[1].xyz
-        + color.b * fColorCorrectMatrix[2].xyz
-        + fColorCorrectMatrix[3].xyz;
+  float3 bloom = tex2D(SSLinear__tFilterTempMap2, texcoord).rgb;
+  return color + DecodeGameSRGB(hdr ? bloom : saturate(bloom)) * CBBloomFilter__packed0.rgb;
 }
 
+float3 ApplyGameLut2HDR(float3 color) {
+  float strength = fColorCorrectColor.w * saturate(RENODX_COLOR_GRADE_STRENGTH);
+  if (strength <= 0.f) return color;
 
-// ============================================================================
-// Original SDR color-correction LUT
-// ============================================================================
+  float3 address = max(mul(float4(color, 1.f), fColorCorrectMatrix).rgb, 0.f);
+  float address_y = renodx::color::y::from::BT709(address);
+  float lookup_y = renodx::tonemap::ExponentialRollOff(address_y, 0.38f, 0.87f);
+  float lookup_scale = renodx::math::DivideSafe(lookup_y, address_y, 1.f);
+  float3 lookup = address * lookup_scale;
+  float3 graded_sdr = SampleGameLutLinear(SSPoint__tColorCorrectTableMap, lookup);
 
-float3 SampleColorCorrectLUT(float3 coord)
-{
-    // The authored table itself remains SDR-domain.
-    coord = saturate(coord);
+  // Fit saturated colors into the usable table range. Account for this
+  // temporary exposure change in the same neutral reference as the luma rolloff.
+  float lookup_peak = renodx::math::Max(lookup);
+  [branch]
+  if (lookup_peak > 0.94f || any(graded_sdr > 0.98f)) {
+    float limit = 0.96f * GameLutWhiteCoordinate(SSPoint__tColorCorrectTableMap);
+    if (lookup_peak > limit) {
+      lookup_scale *= limit / lookup_peak;
+      lookup = address * lookup_scale;
+      graded_sdr = SampleGameLutLinear(SSPoint__tColorCorrectTableMap, lookup);
+    }
+  }
 
-    float4 rSample =
-        tex2D(
-            SSPoint__tColorCorrectTableMap,
-            coord.xx
-        );
+  float3 graded = graded_sdr;
+  [branch]
+  if (lookup_scale < 1.f) {
+    // The RE6 LUT includes a tone curve. Sample the same curve on a neutral
+    // input at the fitted luminance to retain its scene-dependent exposure.
+    float3 neutral_sdr = SampleGameLutLinear(SSPoint__tColorCorrectTableMap, (address_y * lookup_scale).xxx);
+    float neutral_y = renodx::color::y::from::BT709(neutral_sdr);
+    float3 scene = max(color, 0.f);
+    float scene_y = renodx::color::y::from::BT709(scene);
+    float removed_y = scene_y * (1.f - lookup_scale);
+    float reference_gain = clamp(renodx::math::DivideSafe(neutral_y, scene_y * lookup_scale, 1.f), 1.f, 2.f);
 
-    float4 gSample =
-        tex2D(
-            SSPoint__tColorCorrectTableMap,
-            coord.yy
-        );
+    // Retain the reference gain near the shoulder and ease it back into
+    // genuine highlights above scene white.
+    const float recovery_range = 0.07f;
+    float shoulder = recovery_range * (1.f - exp(-removed_y / recovery_range));
+    float over_white = max(scene_y - 1.f, 0.f);
+    float recovered_y = removed_y + (reference_gain - 1.f) * (shoulder + over_white * (over_white / (1.f + over_white)));
+    float3 hdr_reference = scene * renodx::math::DivideSafe(neutral_y + recovered_y, scene_y, 0.f);
+    renodx::draw::Config config = renodx::draw::BuildConfig();
+    config.color_grade_strength = 1.f;
+    graded = renodx::draw::ComputeUntonemappedGraded(hdr_reference, graded_sdr, neutral_sdr, config);
+  }
 
-    float4 bSample =
-        tex2D(
-            SSPoint__tColorCorrectTableMap,
-            coord.zz
-        );
-
-    float3 lutSRGB;
-
-    lutSRGB.r = rSample.r;
-    lutSRGB.g = gSample.g;
-    lutSRGB.b = bSample.b;
-
-    // Convert LUT output to linear before measuring its post-process change.
-    return SRGBToLinear_Unclamped(
-        lutSRGB
-    );
+  return lerp(color, ApplyGameMidtoneSeparation(graded), strength);
 }
 
-// Match the original per-channel table coordinates throughout 0..1.
-// Above white, extend each curve with its endpoint gain. This is an HDR
-// extrapolation, not authored SDR data; it is continuous and leaves SDR intact.
-float3 ApplySDRAccurateGrade(float3 color) {
-    float3 coord = color.r * fColorCorrectMatrix[0].xyz
-                 + color.g * fColorCorrectMatrix[1].xyz
-                 + color.b * fColorCorrectMatrix[2].xyz
-                 + fColorCorrectMatrix[3].xyz;
-    coord = SafePositive(coord);
-    float3 graded = SampleColorCorrectLUT(saturate(coord));
-    graded *= max(coord, 1.0f.xxx);
-    // Keep the game's blend parameter, including any authored extrapolation.
-    return SafePositive(lerp(color, graded, fColorCorrectColor.w));
-}
-
-float4 main(
-    float2 texcoord : TEXCOORD0,
-    float2 noiseUV  : TEXCOORD1
-) : COLOR0
-{
-    // ------------------------------------------------------------------------
-    // Original TV-noise UV construction.
-    // ------------------------------------------------------------------------
-
-    float4 noiseCoords =
-        noiseUV.xyxy
-        * fTVNoisePower.zwzw
-        + fTVNoiseUVOffset.xyxy;
-
-    float4 noiseSampleA =
-        tex2D(
-            SSWrapPoint__tTVNoiseMap,
-            noiseCoords.xy
-        );
-
-    float4 noiseSampleB =
-        tex2D(
-            SSWrapPoint__tTVNoiseMap,
-            noiseCoords.zw
-        );
-
-    float3 tvNoise;
-
-    tvNoise.x =
-        noiseSampleB.y - 0.5f;
-
-    tvNoise.y =
-        noiseSampleB.z - 0.5f;
-
-    tvNoise.z =
-        noiseSampleA.x - 0.5f;
-
-    tvNoise *=
-        1.0f + fTVNoiseHVSync.z;
-
-
-    // ------------------------------------------------------------------------
-    // Base scene.
-    // ------------------------------------------------------------------------
-
-    float4 baseSample =
-        tex2D(
-            SSFilter__tBaseMap,
-            texcoord
-        );
-
-    float3 baseLinear =
-        SRGBToLinear_Unclamped(
-            baseSample.rgb
-        );
-
-
-    // ------------------------------------------------------------------------
-    // Original TV-noise modification in YCbCr.
-    // ------------------------------------------------------------------------
-
-    float3 ycbcr =
-        RGBToYCbCr_WithNoise(
-            baseLinear,
-            tvNoise
-        );
-
-    float3 noisyRGB =
-        YCbCrToRGB(
-            ycbcr
-        );
-
-
-    // ------------------------------------------------------------------------
-    // Original scanline mask.
-    // ------------------------------------------------------------------------
-
-    float2 scanlineUV =
-        noiseUV
-        * fTVNoiseScanline.z;
-
-    float scanlineMask =
-        tex2D(
-            SSWrapPoint__tTVNoiseMaskMap,
-            scanlineUV
-        ).x;
-
-    float scanlinePower =
-        1.0f
-        - (
-            (1.0f - scanlineMask)
-            * fTVNoiseScanline.y
-        );
-
-    noisyRGB *=
-        scanlinePower;
-
-
-    // ------------------------------------------------------------------------
-    // Original bloom/filter-temp contribution.
-    // ------------------------------------------------------------------------
-
-    float4 bloomSample =
-        tex2D(
-            SSLinear__tFilterTempMap2,
-            texcoord
-        );
-
-    float3 bloomLinear =
-        SRGBToLinear_Unclamped(
-            bloomSample.rgb
-        );
-
-
-    // Keep bloom and scene HDR-range. No upper clamp.
-    float3 combined =
-        noisyRGB
-        + bloomLinear
-        * CBBloomFilter__packed0.rgb;
-
-
-    // Preserve finite positive values before color correction.
-    //
-    // Remove negative values without touching HDR values above 1.0.
-    combined =
-        max(
-            combined,
-            0.0f.xxx
-        );
-
-
-    // ------------------------------------------------------------------------
-    // SDR-accurate LUT/color correction with HDR endpoint extension.
-    //
-    // The temporary SDR reference is used only internally. The returned signal
-    // remains HDR and is intended for the real tonemapper later in the pipeline.
-    // ------------------------------------------------------------------------
-
-    float3 gradedLinear =
-        ApplySDRAccurateGrade(
-            combined
-        );
-
-
-    // ------------------------------------------------------------------------
-    // Extended sRGB encode.
-    //
-    // No saturate() here. Preserve >1 values for the later HDR tonemapper.
-    // ------------------------------------------------------------------------
-
-    float3 finalColor =
-        LinearToSRGB_Unclamped(
-            gradedLinear
-        );
-
-    return float4(
-        finalColor,
-        1.0f
-    );
+float4 main(float2 texcoord : TEXCOORD0, float2 noise_uv : TEXCOORD1) : COLOR0 {
+  bool hdr = UseSceneHDR();
+  float3 color = SampleGameGradeInput(texcoord, noise_uv, hdr);
+  float3 graded = hdr ? ApplyGameLut2HDR(color)
+      : ApplyGameColorGrade(color, fColorCorrectMatrix, SSPoint__tColorCorrectTableMap, fColorCorrectColor.w, false);
+  float3 encoded = EncodeGameSRGB(graded);
+  return float4(hdr ? max(encoded, 0.f) : saturate(encoded), 1.f);
 }

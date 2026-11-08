@@ -383,13 +383,13 @@ void main(
   float _1166 = exp2(log2(max(0.0f, (lerp(_1143, OverlayColor.z, OverlayColor.w)))) * InverseGamma.y);
 
 
-  
+
   if (RENODX_TONE_MAP_TYPE != 0) {
     RWOutputTexture[int3((uint)(SV_DispatchThreadID.x), (uint)(SV_DispatchThreadID.y), (uint)(SV_DispatchThreadID.z))] = GenerateOutput(float3(_1164, _1165, _1166), OutputDevice);
     return;
   }
 
-  
+
 
   if (WorkingColorSpace_bIsSRGB == 0) {
     float _1173 = mad((WorkingColorSpace_ToAP1[0].z), _1166, mad((WorkingColorSpace_ToAP1[0].y), _1165, ((WorkingColorSpace_ToAP1[0].x) * _1164)));

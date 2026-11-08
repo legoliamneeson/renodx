@@ -192,4 +192,3 @@ float3 CODWW2MapHDR(float3 source_bt2020, float3 native_pq,
 }
 
 #endif
-

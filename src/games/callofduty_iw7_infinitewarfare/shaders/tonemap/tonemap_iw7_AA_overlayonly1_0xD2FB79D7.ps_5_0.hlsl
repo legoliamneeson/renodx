@@ -312,7 +312,7 @@ void main(
     r1.x = -r1.x * 0.75 + 1;
     r2.xyz = saturate(r1.xxx * r0.xyz);
   }
-  
+
   if (r2.w != 0) {
     r0.x = (int)r0.w & 8;
     r0.yz = t3.Load(r4.yzw).xy;

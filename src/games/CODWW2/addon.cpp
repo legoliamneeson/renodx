@@ -206,11 +206,11 @@ renodx::utils::settings::Settings settings = {
           return IsCustomToneMapper();
 
         },
-        
+
         .is_visible = []() {
           return true;
         },
-       
+
     },
 
 

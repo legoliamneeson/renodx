@@ -98,7 +98,7 @@ void main(
   //LUT
   r1.xyz = r1.xyz * float3(0.96875,0.96875,0.96875) + float3(0.015625,0.015625,0.015625);
   r4.xyz = t2.SampleLevel(s2_s, r1.xyz, 0).xyz;
-  
+
   //outline
   if (r3.y != 0) {
     r0.x = (int)r1.w & 8;

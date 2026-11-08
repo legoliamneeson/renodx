@@ -356,7 +356,7 @@ float4 main(PixelInput input) : COLOR0
     //
     // HDR values above 1.0 remain above 1.0.
 
-    
+
 
     outputColor =
         SafePositive(

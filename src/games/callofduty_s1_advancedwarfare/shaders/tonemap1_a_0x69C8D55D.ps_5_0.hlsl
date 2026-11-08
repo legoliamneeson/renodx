@@ -106,7 +106,7 @@ void main(
     r0.w = saturate(r0.w);
     r1.yzw = r0.www + -r0.xyz;
     r0.xyz = r1.xxx * r1.yzw + r0.xyz;
-    
+
     //tint + Game Brightness
     r1.xyz = cb2[2].xyz * r0.www + cb2[1].xyz;
     r1.xyz = r1.xyz * r0.www + cb2[0].xyz;
@@ -115,7 +115,7 @@ void main(
 
   //colorTonemapped
   colorTonemapped = r0.xyz;
-  
+
   //do tonemap
   Tonemap_Do(r0, colorUntonemapped, colorTonemapped/* , colorSDRNeutral */, v1, t4);
 

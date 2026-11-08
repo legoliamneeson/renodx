@@ -467,7 +467,7 @@ void main(
     r3.z = dot(float3(-0.0240032747,-0.128968775,1.15297174), r0.xyz);
 
     SetTonemappedBT709(r3.xyz);
-    
+
     r2.xyz = max(float3(0,0,0), r3.xyz);
   }
   r0.xyz = r2.xyz * r2.xyz;

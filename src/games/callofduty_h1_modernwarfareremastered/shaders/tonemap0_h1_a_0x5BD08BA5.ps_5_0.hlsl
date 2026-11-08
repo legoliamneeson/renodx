@@ -33,7 +33,7 @@ void main(
   uint4 bitmask, uiDest;
   float4 fDest;
 
-  float3 colorUntonemapped; 
+  float3 colorUntonemapped;
 
   //sample bloom
   r0.xy = max(cb2[32].xy, v1.xy);
@@ -52,14 +52,14 @@ void main(
 
   //colorUntonemapped
   colorUntonemapped = r0.xyz * Tonemap_CalculatePreExposureMultiplier(cb4[0], cb4[1]/*, cb4[2]*/);
-  
+
   //TONEMAP
   {
     //create mask for highlights
-    r1.xyz = cmp(cb4[0].xxx >= r0.xyz); //cb4[0].x is threshold 
+    r1.xyz = cmp(cb4[0].xxx >= r0.xyz); //cb4[0].x is threshold
     r2.xyz = r1.xyz ? float3(0,0,0) : float3(1,1,1);
     r1.xyz = r1.xyz ? float3(1,1,1) : 0;
-    
+
     //autoexposure + constrast + blowout. This can ruin luminance for HDR when they set a new black floor.
     r3.xyz = cb4[1].xxx * r2.xyz; //highlights
     r3.xyz = r1.xyz * cb4[2].xxx + r3.xyz;

@@ -92,13 +92,13 @@ void main(
     r0.xyz = cb2[1].www * r1.xyz + r0.xyz;
   }
   r0.xyz = saturate(r0.xyz);
-  
+
   //colorSDRNeutral
   colorSDRNeutral = r0.xyz;
-  
-  //to srgb 
+
+  //to srgb
   r0.xyz = renodx::color::srgb::EncodeSafe(r0.xyz);
-  // {   
+  // {
   //   r1.xyz = cmp(float3(0.00313080009,0.00313080009,0.00313080009) >= r0.xyz); //(different order than other, but same)
   //   r2.xyz = float3(12.9200001,12.9200001,12.9200001) * r0.xyz;
   //   r0.xyz = log2(r0.xyz);
@@ -108,7 +108,7 @@ void main(
   //   r0.xyz = r0.xyz * float3(1.05499995,1.05499995,1.05499995) + float3(-0.0549999997,-0.0549999997,-0.0549999997);
   //   r0.xyz = r1.xyz ? r2.xyz : r0.xyz;
   // }
-  
+
   //LUT
   r0.xyz = r0.xyz * float3(0.96875,0.96875,0.96875) + float3(0.015625,0.015625,0.015625);
   r0.xyz = t5.Sample(s2_s, r0.xyz).xyz;
@@ -122,7 +122,7 @@ void main(
     r0.w = saturate(r0.w);
     r1.yzw = r0.www + -r0.xyz;
     r0.xyz = r1.xxx * r1.yzw + r0.xyz;
-    
+
     r1.xyz = cb2[4].xyz * r0.www + cb2[3].xyz;
     r1.xyz = r1.xyz * r0.www + cb2[2].xyz;
     r0.xyz = r0.xyz * r1.xyz + cb2[5].xyz;

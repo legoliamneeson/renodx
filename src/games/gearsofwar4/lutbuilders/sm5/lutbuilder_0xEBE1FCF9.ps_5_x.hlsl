@@ -182,7 +182,7 @@ void frag_main()
     float _614 = dp3_f32(float3(0.02061887085437774658203125f, 0.109567292034626007080078125f, 0.8696067333221435546875f), _611);
 
     SetUngradedAP1(float3(_612, _613, _614));
-    
+
     float _652;
     float _653;
     float _654;
@@ -462,7 +462,7 @@ void frag_main()
         _1607 = tonemapped_bt709.x;
         _1606 = tonemapped_bt709.y;
         _1605 = tonemapped_bt709.z;
-    
+
     }
     float _1613 = asfloat(CB0_m[26u].y);
     float _1619 = asfloat(CB0_m[26u].x);

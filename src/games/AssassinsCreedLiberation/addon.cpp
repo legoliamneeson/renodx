@@ -74,7 +74,7 @@ float current_settings_mode = 0;
 
 constexpr float TONE_MAP_TYPE_VANILLA = 0.f;
 constexpr float TONE_MAP_TYPE_RENODRT = 3.f;
-constexpr float TONE_MAP_TYPE_PSYCHOV24 = 24.f;
+constexpr float TONE_MAP_TYPE_PSYCHOV30 = 30.f;
 
 inline bool IsCustomToneMapperEnabled() {
   return shader_injection.tone_map_type != TONE_MAP_TYPE_VANILLA;
@@ -84,8 +84,8 @@ inline bool IsRenoDRTEnabled() {
   return shader_injection.tone_map_type == TONE_MAP_TYPE_RENODRT;
 }
 
-inline bool IsPsychoV24Enabled() {
-  return shader_injection.tone_map_type == TONE_MAP_TYPE_PSYCHOV24;
+inline bool IsPsychoV30Enabled() {
+  return shader_injection.tone_map_type == TONE_MAP_TYPE_PSYCHOV30;
 }
 
 renodx::utils::settings::Settings settings = {
@@ -108,11 +108,11 @@ renodx::utils::settings::Settings settings = {
         .label = "Tone Mapper",
         .section = "Tone Mapping",
         .tooltip = "Sets the tone mapper type",
-        .labels = {"Vanilla", "RenoDRT", "PsychoV24"},
+        .labels = {"Vanilla", "RenoDRT", "PsychoV30"},
         .parse = [](float value) {
           if (value < 0.5f) return TONE_MAP_TYPE_VANILLA;
           if (value < 1.5f) return TONE_MAP_TYPE_RENODRT;
-          return TONE_MAP_TYPE_PSYCHOV24;
+          return TONE_MAP_TYPE_PSYCHOV30;
         },
         .is_visible = []() { return current_settings_mode >= 1; },
     },
@@ -146,6 +146,46 @@ renodx::utils::settings::Settings settings = {
         .tooltip = "Sets the brightness of UI and HUD elements in nits",
         .min = 48.f,
         .max = 500.f,
+    },
+    new renodx::utils::settings::Setting{
+        .key = "AutoExposureMode",
+        .binding = &shader_injection.auto_exposure_mode,
+        .value_type = renodx::utils::settings::SettingValueType::INTEGER,
+        .default_value = 1.f,
+        .label = "Auto Exposure",
+        .section = "Auto Exposure",
+        .tooltip = "HDR Stable reduces the influence of bright highlights and calms exposure changes.",
+        .labels = {"Original", "HDR Stable"},
+        .is_enabled = []() { return IsCustomToneMapperEnabled(); },
+        .is_visible = []() { return current_settings_mode >= 1; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "AutoExposureSpeed",
+        .binding = &shader_injection.auto_exposure_speed,
+        .default_value = 35.f,
+        .label = "Adaptation Speed",
+        .section = "Auto Exposure",
+        .tooltip = "Scales the game's adaptation speed. 100 is original speed; 0 holds exposure within the current limits.",
+        .min = 0.f,
+        .max = 100.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return IsCustomToneMapperEnabled() && shader_injection.auto_exposure_mode > 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1; },
+    },
+    new renodx::utils::settings::Setting{
+        .key = "AutoExposureHighlightProtection",
+        .binding = &shader_injection.auto_exposure_highlight_protection,
+        .default_value = 60.f,
+        .label = "Highlight Protection",
+        .section = "Auto Exposure",
+        .tooltip = "Reduces how strongly unusually bright regions dim the rest of the scene. 0 uses the original metering average.",
+        .min = 0.f,
+        .max = 100.f,
+        .format = "%.0f%%",
+        .is_enabled = []() { return IsCustomToneMapperEnabled() && shader_injection.auto_exposure_mode > 0.f; },
+        .parse = [](float value) { return value * 0.01f; },
+        .is_visible = []() { return current_settings_mode >= 1; },
     },
     new renodx::utils::settings::Setting{
         .key = "GammaCorrection",
@@ -327,85 +367,57 @@ renodx::utils::settings::Settings settings = {
         .parse = [](float value) { return value * 0.02f; },
     },
     new renodx::utils::settings::Setting{
-        .key = "PsychoV24Compression",
-        .binding = &shader_injection.psychov24_compression,
+        .key = "PsychoV30Compression",
+        .binding = &shader_injection.psychov30_compression,
         .default_value = 0.f,
-        .label = "PsychoV24 Compression",
+        .label = "PsychoV30 Compression",
         .section = "Color Grading",
-        .tooltip = "PsychoV24 shoulder curve. 0 = auto compression, 50 = 1.00, 100 = 2.00, 200 = 4.00.",
+        .tooltip = "PsychoV30 shoulder curve. 0 = auto compression, 50 = 1.00, 100 = 2.00, 200 = 4.00.",
         .min = 0.f,
         .max = 400.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .parse = [](float value) { return value * 0.02f; },
         .is_visible = []() { return current_settings_mode >= 1; },
     },
     new renodx::utils::settings::Setting{
-        .key = "PsychoV24ConeResponse",
-        .binding = &shader_injection.psychov24_cone_response,
+        .key = "PsychoV30ConeResponse",
+        .binding = &shader_injection.psychov30_cone_response,
         .default_value = 50.f,
-        .label = "PsychoV24 Cone Response",
+        .label = "PsychoV30 Cone Response",
         .section = "Color Grading",
-        .tooltip = "Scales PsychoV24 cone response. 50 = 1.00 neutral. Higher values increase PsychoV24 contrast/purity response.",
+        .tooltip = "Scales PsychoV30 cone response. 50 = 1.00 neutral. Higher values increase PsychoV30 contrast/purity response.",
         .min = 0.f,
         .max = 100.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .parse = [](float value) { return value * 0.02f; },
         .is_visible = []() { return current_settings_mode >= 1; },
     },
     new renodx::utils::settings::Setting{
-        .key = "PsychoV24GamutCompression",
-        .binding = &shader_injection.psychov24_gamut_compression,
+        .key = "PsychoV30GamutCompression",
+        .binding = &shader_injection.psychov30_gamut_compression,
         .default_value = 100.f,
-        .label = "PsychoV24 Gamut Compression",
+        .label = "PsychoV30 Gamut Compression",
         .section = "Color Grading",
-        .tooltip = "PsychoV24 gamut compression strength.",
+        .tooltip = "PsychoV30 gamut compression strength.",
         .min = 0.f,
         .max = 100.f,
         .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .parse = [](float value) { return value * 0.01f; },
         .is_visible = []() { return current_settings_mode >= 2; },
     },
     new renodx::utils::settings::Setting{
-        .key = "PsychoV24GamutMode",
-        .binding = &shader_injection.psychov24_gamut_mode,
+        .key = "PsychoV30GamutMode",
+        .binding = &shader_injection.psychov30_gamut_mode,
         .value_type = renodx::utils::settings::SettingValueType::INTEGER,
         .default_value = 1.f,
-        .label = "PsychoV24 Gamut Mode",
+        .label = "PsychoV30 Gamut Mode",
         .section = "Color Grading",
         .labels = {"BT709", "BT2020"},
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
+        .is_enabled = []() { return IsPsychoV30Enabled(); },
         .is_visible = []() { return current_settings_mode >= 2; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "PsychoV24HighlightSaturation",
-        .binding = &shader_injection.psychov24_highlight_saturation,
-        .default_value = 100.f,
-        .label = "PsychoV24 Highlight Saturation",
-        .section = "Color Grading",
-        .tooltip = "PsychoV24 highlight_saturation parameter. 100 = 1.00 neutral. Note: the supplied test24 shader currently declares this parameter but does not consume it internally.",
-        .min = 0.f,
-        .max = 200.f,
-        .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
-        .parse = [](float value) { return value * 0.01f; },
-        .is_visible = []() { return current_settings_mode >= 1; },
-    },
-    new renodx::utils::settings::Setting{
-        .key = "PsychoV24GamutHueRestore",
-        .binding = &shader_injection.psychov24_gamut_hue_restore,
-        .default_value = 0.f,
-        .label = "PsychoV24 Gamut Hue Restore",
-        .section = "Color Grading",
-        .tooltip = "Restores the pre-gamut OKLab hue direction after PsychoV24 gamut compression. 0 = off, 100 = full restore.",
-        .min = 0.f,
-        .max = 100.f,
-        .format = "%.2f",
-        .is_enabled = []() { return IsPsychoV24Enabled(); },
-        .parse = [](float value) { return value * 0.01f; },
-        .is_visible = []() { return current_settings_mode >= 1; },
     },
     new renodx::utils::settings::Setting{
         .key = "ColorGradeScene",
@@ -508,7 +520,7 @@ renodx::utils::settings::Settings settings = {
     {"R11G11B10_FLOAT", reshade::api::format::r11g11b10_float},
     {"R16G16B16A16_TYPELESS", reshade::api::format::r16g16b16a16_typeless},
 };
- 
+
 void OnPresetOff() {
   //   renodx::utils::settings::UpdateSetting("toneMapType", 0.f);
   //   renodx::utils::settings::UpdateSetting("toneMapPeakNits", 203.f);
@@ -545,8 +557,8 @@ bool initialized = false;
 
 }  // namespace
 
-extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX";
-extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "RenoDX (Generic)";
+extern "C" __declspec(dllexport) constexpr const char* NAME = "RenoDX - Assassin's Creed Liberation";
+extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION = "SDR-matched HDR with RenoDRT and PsychoV30";
 
 BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
   switch (fdw_reason) {
@@ -762,22 +774,22 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       renodx::mods::swapchain::swap_chain_upgrade_targets.push_back({
           .old_format = reshade::api::format::r8g8b8a8_unorm,
           .new_format = reshade::api::format::r16g16b16a16_float,
-        
+
       });
       renodx::mods::swapchain::swap_chain_upgrade_targets.push_back({
           .old_format = reshade::api::format::r8g8b8a8_typeless,
           .new_format = reshade::api::format::r16g16b16a16_float,
-       
+
       });
       renodx::mods::swapchain::swap_chain_upgrade_targets.push_back({
           .old_format = reshade::api::format::r8g8b8a8_unorm_srgb,
           .new_format = reshade::api::format::r16g16b16a16_float,
-       
+
       });
-    
- 
+
+
       break;
- 
+
     case DLL_PROCESS_DETACH:
       reshade::unregister_event<reshade::addon_event::present>(OnPresent);
       reshade::unregister_addon(h_module);

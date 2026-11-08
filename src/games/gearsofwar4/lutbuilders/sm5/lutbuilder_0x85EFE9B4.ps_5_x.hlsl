@@ -167,7 +167,7 @@ void main(
   r0.xyz = max(float3(0,0,0), r0.xyz);
   r0.w = dot(r0.xyz, float3(0.272228718,0.674081743,0.0536895171));
 
-  SetUngradedAP1(r0.xyz); 
+  SetUngradedAP1(r0.xyz);
 
   r0.xyz = r0.xyz + -r0.www;
   r0.xyz = r0.xyz * float3(0.959999979,0.959999979,0.959999979) + r0.www;

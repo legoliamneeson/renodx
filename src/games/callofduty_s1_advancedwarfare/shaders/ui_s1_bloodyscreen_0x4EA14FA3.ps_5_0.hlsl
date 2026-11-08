@@ -51,11 +51,11 @@ void main(
   r0.xy = t4.Sample(s4_s, v1.xy).xy;
   r0.zw = t3.Sample(s2_s, v1.xy).xy;
   r0 = max(r0, float4(0,0,0,0)); //new
-  
+
   r1.x = saturate(r0.x + r0.z);
   r1.x = cmp(r1.x < 0.00999999978);
   if (r1.x != 0) discard;
-  r1.xyz = t2.Sample(s0_s, v1.xy).xyz; 
+  r1.xyz = t2.Sample(s0_s, v1.xy).xyz;
   r1 = max(r1, float4(0,0,0,0)); //new
 
   r2.xyz = t5.Sample(s3_s, v1.xy).xyz;
@@ -113,7 +113,7 @@ void main(
   r0.yw = r0.yw * float2(0.00999999978,0.00999999978) + v1.xy;
   r2.xyz = t6.Sample(s5_s, r0.yw).xyz;
   r2 = max(r2, float4(0,0,0,0)); //new. This fixed weird neg doing wierd colors.
-  
+
   r0.xyw = r2.xyz * r0.xxx;
   o0.xyz = r1.xyz * r0.zzz + r0.xyw;
   return;

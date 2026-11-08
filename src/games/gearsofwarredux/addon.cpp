@@ -26,6 +26,8 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     CustomShaderEntry(0x29CCB91A),
     CustomShaderEntry(0xD844C4C3),  // FSR1 RCAS final pass
     CustomShaderEntry(0x71B33647),  // final copy when motion blur is off
+    CustomShaderEntry(0xDF37C319),  // post-scene HUD, bounded to UI white
+    CustomShaderEntry(0xECF8AA5E),  // reload/HUD material after the scene pass
 };
 
 ShaderInjectData shader_injection = {
@@ -402,7 +404,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
               .name = "Scene Intermediate",
           });
         }
-      }  
+      }
 
       // The DLSS output has UAV/SRV usage, without render_target. Retain its
       // captured native upgrade so NGX can write unclipped HDR to that texture.

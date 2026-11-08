@@ -164,7 +164,7 @@ colorUntonemapped = r1.xyz * Tonemap_CalculatePreExposureMultiplier(cb13[0].xyz,
   o0.xyzw = r3.xyzw;
   o1.x = r3.w;
 
-  
+
   colorTonemapped = o0.xyz;
   o0.xyz = Tonemap_Do(colorUntonemapped, colorTonemapped, v1.xy, t0);
 // o0.xyz = Tonemap_DrawUnknown(o0.xyz, v1.xy);

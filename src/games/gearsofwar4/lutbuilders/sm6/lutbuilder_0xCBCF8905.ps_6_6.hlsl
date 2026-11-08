@@ -130,7 +130,7 @@ float4 main(
     if (CUSTOM_LUT_OPTIMIZATION == 0.f) {
       config.gamma_correction = 0.f;
     } else {
-      color = renodx::draw::ToneMapPass(color, config);
+      color = Gears4ToneMapPass(color, config);
     }
 
     color = renodx::draw::RenderIntermediatePass(color, config);

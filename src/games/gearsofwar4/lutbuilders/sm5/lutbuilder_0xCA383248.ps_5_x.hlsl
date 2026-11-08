@@ -318,7 +318,7 @@ void main(
   r0.xyz = cb0[36].zzz * r1.xyz + r0.xyz;
 
   SetTonemappedAP1(r0.xyz);
-  
+
   r1.x = saturate(dot(cb1[12].xyz, r0.xyz));
   r1.y = saturate(dot(cb1[13].xyz, r0.xyz));
   r1.z = saturate(dot(cb1[14].xyz, r0.xyz));

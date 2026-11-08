@@ -2137,7 +2137,7 @@ renodx::mods::shader::CustomShaders custom_shaders = {
     // CustomSwapchainShader(0x00000000),
     // BypassShaderEntry(0x00000000),
     __ALL_CUSTOM_SHADERS,
-    
+
 };
 
 ShaderInjectData shader_injection;
@@ -6402,8 +6402,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
         renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;
-        renodx::mods::shader::constant_buffer_offset = 50 * 4; 
-        renodx::mods::swapchain::set_color_space = false; 
+        renodx::mods::shader::constant_buffer_offset = 50 * 4;
+        renodx::mods::swapchain::set_color_space = false;
         // The game-native com_maxfps slider below owns the cap. Do not stack
         // RenoDX's generic swapchain limiter on top of WaW's own frame deadline.
         renodx::utils::swapchain::fps_limit = 0.f;
@@ -6801,11 +6801,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
             reshade::log::message(reshade::log::level::info, s.str().c_str());
           }
         }
-       
+
         // Upgrade only render-target resources and keep resource-view cloning
         // enabled so clears, RTVs and SRV variants continue to reference the same
         // upgraded resource.
-       
+
         const reshade::api::format scene_intermediate_formats[] = {
     reshade::api::format::b8g8r8a8_unorm,
 };
@@ -6833,12 +6833,12 @@ for (const auto old_format : scene_intermediate_formats) {
     });
   }
 }
-      
 
 
-     
-    
-        
+
+
+
+
         // D3D9 copy/readback interception. These callbacks are ignored for the
         // D3D11/D3D12 display-proxy side and are recursion-guarded internally.
         // Release the cached native D3D9 blit objects before Reset/device teardown.

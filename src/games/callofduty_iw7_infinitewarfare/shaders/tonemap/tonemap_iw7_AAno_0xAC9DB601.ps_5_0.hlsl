@@ -81,7 +81,7 @@ void main(
   // //tonemap
   // colorTonemapped = r1.xyz;
   // r1.xyz = Tonemap_Do(colorUntonemapped, colorTonemapped, v1.xy, t0);
-  
+
   //stuff after aa (if was present)
   r0.z = max(r1.x, r1.y);
   r0.z = min(r0.z, r1.z);

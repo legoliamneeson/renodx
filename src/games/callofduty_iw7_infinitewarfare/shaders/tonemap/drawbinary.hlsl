@@ -2,7 +2,7 @@
 #define DB_DIV 7.f
 #define BF_B_T_1 float3(0,0.25f,0)
 #define BF_B_T_2 float3(0.25f,0.25f,0)
-#define BF_B_T color != BF_B_T_1 && color != BF_B_F ? BF_B_T_1 : BF_B_T_2 
+#define BF_B_T color != BF_B_T_1 && color != BF_B_F ? BF_B_T_1 : BF_B_T_2
 #define BF_B_F (float3)0.2f
 
 float3 DrawBinary(in int i, in float3 color, in float2 uv) {

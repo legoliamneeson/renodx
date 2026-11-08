@@ -269,7 +269,7 @@ float4 main(
   float _337 = dot(float3(_330, _333, _336), float3(0.2722287178039551f, 0.6740817427635193f, 0.053689517080783844f));
 
   SetUngradedAP1(float3(_330, _333, _336));
-  
+
   float _341 = (_330 / _337) + -1.0f;
   float _342 = (_333 / _337) + -1.0f;
   float _343 = (_336 / _337) + -1.0f;
@@ -307,7 +307,7 @@ float4 main(
   float _742 = ((_624 * (((cb0_019z + cb0_034z) + _521) + (((cb0_018z * cb0_033z) * _530) * exp2(log2(exp2(((cb0_016z * cb0_031z) * _548) * log2(max(0.0f, ((((cb0_015z * cb0_030z) * _557) * _450) + _374)) * 5.55555534362793f)) * 0.18000000715255737f) * (1.0f / ((cb0_017z * cb0_032z) * _539)))))) + (_512 * (((cb0_019z + cb0_024z) + _388) + (((cb0_018z * cb0_023z) * _402) * exp2(log2(exp2(((cb0_016z * cb0_021z) * _430) * log2(max(0.0f, ((((cb0_015z * cb0_020z) * _444) * _450) + _374)) * 5.55555534362793f)) * 0.18000000715255737f) * (1.0f / ((cb0_017z * cb0_022z) * _416))))))) + ((((cb0_019z + cb0_029z) + _633) + (((cb0_018z * cb0_028z) * _642) * exp2(log2(exp2(((cb0_016z * cb0_026z) * _660) * log2(max(0.0f, ((((cb0_015z * cb0_025z) * _669) * _450) + _374)) * 5.55555534362793f)) * 0.18000000715255737f) * (1.0f / ((cb0_017z * cb0_027z) * _651))))) * _727);
 
   SetUntonemappedAP1(float3(_738, _740, _742));
-  
+
   float _757 = ((mad(0.061360642313957214f, _742, mad(-4.540197551250458e-09f, _740, (_738 * 0.9386394023895264f))) - _738) * cb0_036z) + _738;
   float _758 = ((mad(0.169205904006958f, _742, mad(0.8307942152023315f, _740, (_738 * 6.775371730327606e-08f))) - _740) * cb0_036z) + _740;
   float _759 = (mad(-2.3283064365386963e-10f, _740, (_738 * -9.313225746154785e-10f)) * cb0_036z) + _742;
@@ -411,7 +411,7 @@ float4 main(
   float _1082 = ((mad(0.9999996423721313f, _1064, mad(2.0954757928848267e-08f, _1063, (_1062 * 1.862645149230957e-08f))) - _1064) * cb0_036z) + _1064;
 
   SetTonemappedAP1(_1080, _1081, _1082);
-  
+
   float _1104 = max(0.0f, mad((UniformBufferConstants_WorkingColorSpace_192[0].z), _1082, mad((UniformBufferConstants_WorkingColorSpace_192[0].y), _1081, ((UniformBufferConstants_WorkingColorSpace_192[0].x) * _1080))));
   float _1105 = max(0.0f, mad((UniformBufferConstants_WorkingColorSpace_192[1].z), _1082, mad((UniformBufferConstants_WorkingColorSpace_192[1].y), _1081, ((UniformBufferConstants_WorkingColorSpace_192[1].x) * _1080))));
   float _1106 = max(0.0f, mad((UniformBufferConstants_WorkingColorSpace_192[2].z), _1082, mad((UniformBufferConstants_WorkingColorSpace_192[2].y), _1081, ((UniformBufferConstants_WorkingColorSpace_192[2].x) * _1080))));
@@ -425,7 +425,7 @@ float4 main(
   if (RENODX_TONE_MAP_TYPE != 0) {
     return GenerateOutput(float3(_1155, _1156, _1157));
   }
-  
+
   if (UniformBufferConstants_WorkingColorSpace_320 == 0) {
     float _1164 = mad((UniformBufferConstants_WorkingColorSpace_128[0].z), _1157, mad((UniformBufferConstants_WorkingColorSpace_128[0].y), _1156, ((UniformBufferConstants_WorkingColorSpace_128[0].x) * _1155)));
     float _1167 = mad((UniformBufferConstants_WorkingColorSpace_128[1].z), _1157, mad((UniformBufferConstants_WorkingColorSpace_128[1].y), _1156, ((UniformBufferConstants_WorkingColorSpace_128[1].x) * _1155)));

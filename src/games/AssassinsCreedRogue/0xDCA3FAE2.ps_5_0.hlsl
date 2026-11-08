@@ -1,3 +1,5 @@
+#include "./finite.hlsli"
+
 // ---- Created with 3Dmigoto v1.3.16 on Sat Jul 04 18:35:44 2026
 
 cbuffer _Globals : register(b0)
@@ -118,8 +120,9 @@ void main(
   r0.xyzw = v2.xyzw * r0.xyzw;
   r1.x = cmp(r1.x < 0);
   if (r1.x != 0) discard;
-  o0.w = g_FadeFactor * r0.w;
-  o0.xyz = r0.xyz;
-  o0.xyz = saturate(o0.xyz);
+  float alpha = g_FadeFactor * r0.w;
+  if (!RogueIsFinite(float4(r0.xyz, alpha))) discard;
+  o0.w = clamp(alpha, -ROGUE_FP16_MAX, ROGUE_FP16_MAX);
+  o0.xyz = saturate(r0.xyz);
   return;
 }

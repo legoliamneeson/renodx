@@ -64,7 +64,7 @@ void main(
     neutral_sdr = saturate(renodx::tonemap::renodrt::NeutralSDR(tonemapped));
     r2.rgb = renodx::color::srgb::Encode(neutral_sdr);
   }
-  
+
   r0.w = dot(r2.xyz, float3(0.300000012,0.589999974,0.109999999));
   r1.z = 1 + -r0.w;
   r1.w = saturate(r1.z / cb2[16].y);
@@ -78,12 +78,12 @@ void main(
   r0.y = r1.w * r0.z + r0.y;
   r0.x = saturate(r0.y * r0.x + cb2[17].x);
   r3.xyz = float3(1,1,1) + -r2.xyz;
-  
+
   r3.xyz = saturate(r3.xyz * cb2[5].xyz + r2.xyz);
   r3.xyz = saturate(cb2[7].xyz * r3.xyz);
   r4.xyz = saturate(cb2[9].xyz + r3.xyz);
   r4.xyz = saturate(cb2[11].xyz * r4.xyz);
-  
+
   r3.xyz = -r4.xyz + r3.xyz;
   r3.xyz = r0.xxx * r3.xyz + r4.xyz;
   r0.x = 1 + -r0.x;

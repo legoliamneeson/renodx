@@ -86,17 +86,17 @@ void main(
   r1.xyz = cb2[2].xxx * r1.xyz;
   r1.xyz = float3(0.25,0.25,0.25) * r1.xyz;
   r1.x = dot(r1.xyz, float3(0.212599993,0.715200007,0.0722000003));
-  
+
   //r0.yzw = saturate(r1.xxx + r0.yzw);
   r0.yzw = (r1.xxx + r0.yzw);
-  
+
   r0.xyz = r0.xxx * -r0.yzw + r0.yzw;
   r1.xyz = cb2[1].xyz + -r0.xyz;
   r0.xyz = cb2[3].www * r1.xyz + r0.xyz;
-  
+
   //o0.xyz = max(float3(0,0,0), r0.xyz);
   o0.xyz = r0.xyz;
-  
+
   o0.w = 1;
   return;
 }

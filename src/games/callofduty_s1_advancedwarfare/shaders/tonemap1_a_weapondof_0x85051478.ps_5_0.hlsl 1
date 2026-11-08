@@ -84,7 +84,7 @@ void main(
   //colorSDRNeutral
   colorSDRNeutral = r0.xyz;
 
-  //to srgb 
+  //to srgb
   r0.xyz = renodx::color::srgb::EncodeSafe(r0.xyz);
   // {
   //   r1.xyz = log2(r0.xyz);

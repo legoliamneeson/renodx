@@ -220,7 +220,7 @@ float3 CustomTonemap(float3 untonemapped, float2 coords) {
   if (RENODX_TONE_MAP_TYPE == 0.f) {
     return renodx::draw::RenderIntermediatePass(saturate(untonemapped));
   }
-  
+
   untonemapped = PreTonemapSliders(untonemapped);
   float3 hdr_color = HDRDisplayMap(untonemapped);
   hdr_color = PostTonemapSliders(hdr_color);

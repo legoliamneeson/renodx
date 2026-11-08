@@ -23,6 +23,7 @@
 #ifndef RENODX_TONE_MAP_TYPE_PSYCHOV24
 #define RENODX_TONE_MAP_TYPE_PSYCHOV24       24.f
 #endif
+#define RENODX_TONE_MAP_TYPE_PSYCHOV30       30.f
 #ifndef RENODX_PSYCHOV24_COMPRESSION
 #define RENODX_PSYCHOV24_COMPRESSION         shader_injection.psychov24_compression
 #endif
@@ -144,6 +145,11 @@ struct ShaderInjectData {
   float psychov24_padding0;
   float psychov24_padding1;
   float psychov24_padding2;
+
+  float psychov30_compression;
+  float psychov30_gamut_compression;
+  float psychov30_gamut_mode;
+  float psychov30_cone_response;
 };
 
 #ifndef __cplusplus
@@ -181,7 +187,7 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_SWAP_CHAIN_GAMMA_CORRECTION   shader_injection.swap_chain_gamma_correction
 // #define RENODX_SWAP_CHAIN_DECODING_COLOR_SPACE shader_injection.swap_chain_decoding_color_space
 #define RENODX_SWAP_CHAIN_CUSTOM_COLOR_SPACE shader_injection.swap_chain_custom_color_space
-// #define RENODX_SWAP_CHAIN_SCALING_NITS         shader_injection.swap_chain_scaling_nits
+#define RENODX_SWAP_CHAIN_SCALING_NITS        RENODX_DIFFUSE_WHITE_NITS
 // #define RENODX_SWAP_CHAIN_CLAMP_NITS           shader_injection.swap_chain_clamp_nits
 #define RENODX_SWAP_CHAIN_CLAMP_COLOR_SPACE    shader_injection.swap_chain_clamp_color_space
 #define RENODX_SWAP_CHAIN_ENCODING             shader_injection.swap_chain_encoding
